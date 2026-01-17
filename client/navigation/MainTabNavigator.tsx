@@ -3,12 +3,17 @@ import { createBottomTabNavigator } from "@react-navigation/bottom-tabs";
 import { Feather } from "@expo/vector-icons";
 import { BlurView } from "expo-blur";
 import { Platform, StyleSheet } from "react-native";
+
 import HomeStackNavigator from "@/navigation/HomeStackNavigator";
+import TransactionsStackNavigator from "@/navigation/TransactionsStackNavigator";
+import CardsStackNavigator from "@/navigation/CardsStackNavigator";
 import ProfileStackNavigator from "@/navigation/ProfileStackNavigator";
 import { useTheme } from "@/hooks/useTheme";
 
 export type MainTabParamList = {
   HomeTab: undefined;
+  TransactionsTab: undefined;
+  CardsTab: undefined;
   ProfileTab: undefined;
 };
 
@@ -50,6 +55,26 @@ export default function MainTabNavigator() {
           title: "Home",
           tabBarIcon: ({ color, size }) => (
             <Feather name="home" size={size} color={color} />
+          ),
+        }}
+      />
+      <Tab.Screen
+        name="TransactionsTab"
+        component={TransactionsStackNavigator}
+        options={{
+          title: "Activity",
+          tabBarIcon: ({ color, size }) => (
+            <Feather name="activity" size={size} color={color} />
+          ),
+        }}
+      />
+      <Tab.Screen
+        name="CardsTab"
+        component={CardsStackNavigator}
+        options={{
+          title: "Cards",
+          tabBarIcon: ({ color, size }) => (
+            <Feather name="credit-card" size={size} color={color} />
           ),
         }}
       />

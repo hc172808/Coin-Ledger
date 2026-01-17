@@ -59,11 +59,11 @@ export function ErrorFallback({ error, resetError }: ErrorFallbackProps) {
 
       <View style={styles.content}>
         <ThemedText type="h1" style={styles.title}>
-          Something went wrong
+          Oops! GYDS Banking hit a snag
         </ThemedText>
 
         <ThemedText type="body" style={styles.message}>
-          Please reload the app to continue.
+          Don't worry, your funds are safe. Please restart to continue.
         </ThemedText>
 
         <Pressable
