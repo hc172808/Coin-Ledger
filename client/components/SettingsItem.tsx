@@ -53,12 +53,15 @@ export function SettingsItem({
 
   const textColor = destructive ? theme.error : theme.text;
 
+  const isClickable = !hasSwitch && onPress;
+
   return (
     <AnimatedPressable
-      onPress={hasSwitch ? undefined : onPress}
-      onPressIn={handlePressIn}
-      onPressOut={handlePressOut}
-      disabled={hasSwitch}
+      onPress={isClickable ? onPress : undefined}
+      onPressIn={isClickable ? handlePressIn : undefined}
+      onPressOut={isClickable ? handlePressOut : undefined}
+      disabled={!isClickable}
+      accessibilityRole={isClickable ? "button" : undefined}
       style={[
         styles.container,
         { backgroundColor: theme.backgroundDefault },
