@@ -11,11 +11,15 @@ run = ["npm", "run", "server:prod"]
 
 [[ports]]
 localPort = 5000
-externalPort = 5000
+externalPort = 80
 
 [[ports]]
 localPort = 8081
-externalPort = 80
+externalPort = 8081
+
+[[ports]]
+localPort = 8082
+externalPort = 3000
 
 [env]
 PORT = "5000"
@@ -34,6 +38,10 @@ author = "agent"
 [[workflows.workflow.tasks]]
 task = "workflow.run"
 args = "Start App"
+
+[[workflows.workflow.tasks]]
+task = "workflow.run"
+args = "Start Frontend"
 
 [[workflows.workflow]]
 name = "Start App"
@@ -63,8 +71,9 @@ name = "Start Frontend"
 author = "agent"
 mode = "sequential"
 
+[workflows.workflow.metadata]
+outputType = "console"
+
 [[workflows.workflow.tasks]]
 task = "shell.exec"
-args = "npm run expo:dev"
-waitForPort = 8081
-ensurePreviewReachable = "/status"
+args = "EXPO_PACKAGER_PROXY_URL=https://$REPLIT_DEV_DOMAIN REACT_NATIVE_PACKAGER_HOSTNAME=$REPLIT_DEV_DOMAIN EXPO_PUBLIC_DOMAIN=$REPLIT_DEV_DOMAIN npx expo start --localhost"

@@ -3,6 +3,7 @@ import type { Request, Response, NextFunction } from "express";
 import { registerRoutes } from "./routes";
 import * as fs from "fs";
 import * as path from "path";
+import { createProxyMiddleware } from "http-proxy-middleware";
 
 const app = express();
 const log = console.log;
@@ -186,22 +187,33 @@ function configureExpoAndLanding(app: express.Application) {
       return serveExpoManifest(platform, res);
     }
 
-    if (req.path === "/") {
-      return serveLandingPage({
-        req,
-        res,
-        landingPageTemplate,
-        appName,
-      });
-    }
-
     next();
   });
 
   app.use("/assets", express.static(path.resolve(process.cwd(), "assets")));
   app.use(express.static(path.resolve(process.cwd(), "static-build")));
 
-  log("Expo routing: Checking expo-platform header on / and /manifest");
+  const metroProxy = createProxyMiddleware({
+    target: "http://localhost:8081",
+    changeOrigin: true,
+    ws: true,
+    on: {
+      error: (_err: Error, _req: Request, res: Response) => {
+        if (res && typeof (res as Response).status === "function") {
+          (res as Response).status(503).send("Metro bundler not available. Start the frontend workflow.");
+        }
+      },
+    },
+  });
+
+  app.use((req: Request, res: Response, next: NextFunction) => {
+    if (req.path.startsWith("/api")) {
+      return next();
+    }
+    return metroProxy(req, res, next);
+  });
+
+  log("Expo routing: Proxying web requests to Metro bundler, iOS/Android via manifest");
 }
 
 function setupErrorHandler(app: express.Application) {

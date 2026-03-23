@@ -1,11 +1,6 @@
 import React from "react";
-import { StyleSheet, View, Pressable, Switch } from "react-native";
+import { StyleSheet, View, Pressable, Switch, Platform, Alert } from "react-native";
 import { Feather } from "@expo/vector-icons";
-import Animated, {
-  useAnimatedStyle,
-  useSharedValue,
-  withSpring,
-} from "react-native-reanimated";
 
 import { ThemedText } from "@/components/ThemedText";
 import { useTheme } from "@/hooks/useTheme";
@@ -22,8 +17,6 @@ interface SettingsItemProps {
   destructive?: boolean;
 }
 
-const AnimatedPressable = Animated.createAnimatedComponent(Pressable);
-
 export function SettingsItem({
   icon,
   label,
@@ -35,37 +28,20 @@ export function SettingsItem({
   destructive,
 }: SettingsItemProps) {
   const { theme } = useTheme();
-  const scale = useSharedValue(1);
-
-  const animatedStyle = useAnimatedStyle(() => ({
-    transform: [{ scale: scale.value }],
-  }));
-
-  const handlePressIn = () => {
-    if (!hasSwitch) {
-      scale.value = withSpring(0.98);
-    }
-  };
-
-  const handlePressOut = () => {
-    scale.value = withSpring(1);
-  };
 
   const textColor = destructive ? theme.error : theme.text;
-
-  const isClickable = !hasSwitch && onPress;
+  const isClickable = !hasSwitch && typeof onPress === "function";
 
   return (
-    <AnimatedPressable
+    <Pressable
       onPress={isClickable ? onPress : undefined}
-      onPressIn={isClickable ? handlePressIn : undefined}
-      onPressOut={isClickable ? handlePressOut : undefined}
       disabled={!isClickable}
+      testID={`settings-item-${label.toLowerCase().replace(/\s+/g, "-")}`}
       accessibilityRole={isClickable ? "button" : undefined}
-      style={[
+      style={({ pressed }) => [
         styles.container,
         { backgroundColor: theme.backgroundDefault },
-        animatedStyle,
+        isClickable && pressed ? { opacity: 0.7 } : null,
       ]}
     >
       <View style={[styles.iconContainer, { backgroundColor: theme.backgroundSecondary }]}>
@@ -91,7 +67,7 @@ export function SettingsItem({
       ) : (
         <Feather name="chevron-right" size={18} color={theme.textSecondary} />
       )}
-    </AnimatedPressable>
+    </Pressable>
   );
 }
 
