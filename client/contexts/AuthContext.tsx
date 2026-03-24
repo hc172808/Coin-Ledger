@@ -90,11 +90,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   async function refreshWallet() {
     try {
-      const baseUrl = getApiUrl();
-      const url = new URL("/api/wallet", baseUrl);
-      const response = await fetch(url, { credentials: "include" });
-      if (response.ok) {
-        const data = await response.json();
+      const res = await apiRequest("GET", "/api/wallet");
+      if (res.ok) {
+        const data = await res.json();
         setWallet(data);
       }
     } catch (error) {

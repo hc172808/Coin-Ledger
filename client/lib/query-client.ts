@@ -1,19 +1,20 @@
 import { QueryClient, QueryFunction } from "@tanstack/react-query";
+import { getUserData } from "@/lib/storage";
 
-/**
- * Gets the base URL for the Express API server (e.g., "http://localhost:3000")
- * @returns {string} The API base URL
- */
 export function getApiUrl(): string {
   let host = process.env.EXPO_PUBLIC_DOMAIN;
-
   if (!host) {
     throw new Error("EXPO_PUBLIC_DOMAIN is not set");
   }
+  return new URL(`https://${host}`).href;
+}
 
-  let url = new URL(`https://${host}`);
-
-  return url.href;
+async function getAuthHeaders(hasBody = false): Promise<Record<string, string>> {
+  const headers: Record<string, string> = {};
+  if (hasBody) headers["Content-Type"] = "application/json";
+  const userData = await getUserData<{ id: string }>();
+  if (userData?.id) headers["x-user-id"] = userData.id;
+  return headers;
 }
 
 async function throwIfResNotOk(res: Response) {
@@ -26,14 +27,15 @@ async function throwIfResNotOk(res: Response) {
 export async function apiRequest(
   method: string,
   route: string,
-  data?: unknown | undefined,
+  data?: unknown,
 ): Promise<Response> {
   const baseUrl = getApiUrl();
   const url = new URL(route, baseUrl);
+  const headers = await getAuthHeaders(!!data);
 
   const res = await fetch(url, {
     method,
-    headers: data ? { "Content-Type": "application/json" } : {},
+    headers,
     body: data ? JSON.stringify(data) : undefined,
     credentials: "include",
   });
@@ -50,8 +52,10 @@ export const getQueryFn: <T>(options: {
   async ({ queryKey }) => {
     const baseUrl = getApiUrl();
     const url = new URL(queryKey.join("/") as string, baseUrl);
+    const headers = await getAuthHeaders();
 
     const res = await fetch(url, {
+      headers,
       credentials: "include",
     });
 

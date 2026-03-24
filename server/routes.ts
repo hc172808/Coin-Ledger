@@ -2,7 +2,7 @@ import type { Express } from "express";
 import { createServer, type Server } from "node:http";
 import { db } from "./db";
 import { users, wallets, transactions, cards, paymentRequests, auditLogs } from "@shared/schema";
-import { eq } from "drizzle-orm";
+import { eq, or } from "drizzle-orm";
 import { randomUUID, createHash } from "crypto";
 
 function hashPassword(password: string): string {
@@ -193,15 +193,84 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
 
       const userTransactions = await db.query.transactions.findMany({
-        where: eq(transactions.fromUserId, userId),
+        where: or(
+          eq(transactions.fromUserId, userId),
+          eq(transactions.toUserId, userId)
+        ),
         orderBy: (transactions, { desc }) => [desc(transactions.createdAt)],
         limit: 50,
       });
 
-      res.json(userTransactions);
+      const mapped = userTransactions.map((tx) => ({
+        ...tx,
+        displayType: tx.toUserId === userId && tx.fromUserId !== userId ? "receive" : tx.type,
+      }));
+
+      res.json(mapped);
     } catch (error) {
       console.error("Transactions fetch error:", error);
       res.status(500).json({ message: "Failed to fetch transactions" });
+    }
+  });
+
+  app.patch("/api/auth/change-pin", async (req, res) => {
+    try {
+      const userId = req.headers["x-user-id"] as string;
+      if (!userId) {
+        return res.status(401).json({ message: "Unauthorized" });
+      }
+      const { currentPin, newPin } = req.body;
+      if (!currentPin || !newPin) {
+        return res.status(400).json({ message: "Current and new PIN are required" });
+      }
+      const user = await db.query.users.findFirst({ where: eq(users.id, userId) });
+      if (!user || user.pin !== hashPassword(currentPin)) {
+        return res.status(401).json({ message: "Current PIN is incorrect" });
+      }
+      await db.update(users).set({ pin: hashPassword(newPin) }).where(eq(users.id, userId));
+      await db.insert(auditLogs).values({
+        userId,
+        action: "PIN_CHANGED",
+        details: {},
+        ipAddress: req.ip,
+        userAgent: req.get("user-agent"),
+      });
+      res.json({ success: true });
+    } catch (error) {
+      console.error("Change PIN error:", error);
+      res.status(500).json({ message: "Failed to change PIN" });
+    }
+  });
+
+  app.patch("/api/auth/change-password", async (req, res) => {
+    try {
+      const userId = req.headers["x-user-id"] as string;
+      if (!userId) {
+        return res.status(401).json({ message: "Unauthorized" });
+      }
+      const { currentPassword, newPassword } = req.body;
+      if (!currentPassword || !newPassword) {
+        return res.status(400).json({ message: "Current and new password are required" });
+      }
+      const user = await db.query.users.findFirst({ where: eq(users.id, userId) });
+      if (!user || user.password !== hashPassword(currentPassword)) {
+        return res.status(401).json({ message: "Current password is incorrect" });
+      }
+      if (newPassword.length < 8) {
+        return res.status(400).json({ message: "New password must be at least 8 characters" });
+      }
+      await db.update(users).set({ password: hashPassword(newPassword) }).where(eq(users.id, userId));
+      await db.insert(auditLogs).values({
+        userId,
+        action: "PASSWORD_CHANGED",
+        details: {},
+        ipAddress: req.ip,
+        userAgent: req.get("user-agent"),
+      });
+      res.json({ success: true });
+    } catch (error) {
+      console.error("Change password error:", error);
+      res.status(500).json({ message: "Failed to change password" });
     }
   });
 

@@ -1,4 +1,4 @@
-import React, { useState, useCallback } from "react";
+import React, { useState, useCallback, useEffect } from "react";
 import { StyleSheet, View, RefreshControl, ScrollView } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useHeaderHeight } from "@react-navigation/elements";
@@ -17,41 +17,51 @@ import { Spacing } from "@/constants/theme";
 import { useAuth } from "@/contexts/AuthContext";
 import { RootStackParamList } from "@/navigation/RootStackNavigator";
 import { MainTabParamList } from "@/navigation/MainTabNavigator";
+import { apiRequest } from "@/lib/query-client";
 
 type HomeNavigationProp = CompositeNavigationProp<
   BottomTabNavigationProp<MainTabParamList, "HomeTab">,
   NativeStackNavigationProp<RootStackParamList>
 >;
 
-const mockTransactions = [
-  {
-    id: "1",
-    type: "receive" as const,
-    fundType: "internet_funds" as const,
-    amount: "250.00",
-    recipient: "Sarah Johnson",
-    date: "Today, 2:30 PM",
-    status: "completed" as const,
-  },
-  {
-    id: "2",
-    type: "send" as const,
-    fundType: "gyd" as const,
-    amount: "100.50",
-    recipient: "Mike Chen",
-    date: "Yesterday",
-    status: "completed" as const,
-  },
-  {
-    id: "3",
-    type: "request" as const,
-    fundType: "gyds" as const,
-    amount: "75.00",
-    recipient: "Alex Rivera",
-    date: "Jan 15",
-    status: "pending" as const,
-  },
-];
+type ApiTx = {
+  id: string;
+  fromUserId: string;
+  toUserId: string | null;
+  toAddress: string | null;
+  type: string;
+  displayType: string;
+  fundType: string;
+  amount: string;
+  status: string;
+  createdAt: string;
+};
+
+function formatDate(iso: string): string {
+  const d = new Date(iso);
+  const now = new Date();
+  const days = Math.floor((now.getTime() - d.getTime()) / 86400000);
+  if (days === 0) {
+    return `Today, ${d.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", hour12: true })}`;
+  }
+  if (days === 1) return "Yesterday";
+  return d.toLocaleDateString("en-US", { month: "short", day: "numeric" });
+}
+
+function mapTx(tx: ApiTx) {
+  return {
+    id: tx.id,
+    type: (tx.displayType || tx.type) as "send" | "receive" | "request",
+    fundType: tx.fundType as "internet_funds" | "gyd" | "gyds",
+    amount: parseFloat(tx.amount).toLocaleString("en-US", {
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2,
+    }),
+    recipient: tx.toAddress || tx.toUserId || "Unknown",
+    date: formatDate(tx.createdAt),
+    status: tx.status as "completed" | "pending" | "failed",
+  };
+}
 
 export default function HomeScreen() {
   const insets = useSafeAreaInsets();
@@ -62,20 +72,31 @@ export default function HomeScreen() {
   const navigation = useNavigation<HomeNavigationProp>();
 
   const [isRefreshing, setIsRefreshing] = useState(false);
-  const [transactions] = useState(mockTransactions);
+  const [transactions, setTransactions] = useState<ReturnType<typeof mapTx>[]>([]);
+
+  const fetchTransactions = useCallback(async () => {
+    try {
+      const res = await apiRequest("GET", "/api/transactions");
+      const data: ApiTx[] = await res.json();
+      setTransactions(data.slice(0, 3).map(mapTx));
+    } catch (e) {
+      console.error("Failed to load transactions:", e);
+    }
+  }, []);
+
+  useEffect(() => {
+    fetchTransactions();
+  }, [fetchTransactions]);
 
   const onRefresh = useCallback(async () => {
     setIsRefreshing(true);
-    await refreshWallet();
+    await Promise.all([refreshWallet(), fetchTransactions()]);
     setIsRefreshing(false);
-  }, [refreshWallet]);
+  }, [refreshWallet, fetchTransactions]);
 
   const formatBalance = (balance: string | undefined) => {
     const num = parseFloat(balance || "0");
-    return num.toLocaleString("en-US", {
-      minimumFractionDigits: 2,
-      maximumFractionDigits: 2,
-    });
+    return num.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
   };
 
   return (
@@ -83,18 +104,11 @@ export default function HomeScreen() {
       style={[styles.container, { backgroundColor: theme.backgroundRoot }]}
       contentContainerStyle={[
         styles.content,
-        {
-          paddingTop: headerHeight + Spacing.lg,
-          paddingBottom: tabBarHeight + Spacing.xl,
-        },
+        { paddingTop: headerHeight + Spacing.lg, paddingBottom: tabBarHeight + Spacing.xl },
       ]}
       scrollIndicatorInsets={{ bottom: insets.bottom }}
       refreshControl={
-        <RefreshControl
-          refreshing={isRefreshing}
-          onRefresh={onRefresh}
-          tintColor={theme.primary}
-        />
+        <RefreshControl refreshing={isRefreshing} onRefresh={onRefresh} tintColor={theme.primary} />
       }
       showsVerticalScrollIndicator={false}
     >
@@ -163,7 +177,7 @@ export default function HomeScreen() {
 
       {transactions.length > 0 ? (
         <View style={styles.transactionsList}>
-          {transactions.slice(0, 3).map((tx) => (
+          {transactions.map((tx) => (
             <TransactionItem
               key={tx.id}
               type={tx.type}
@@ -187,29 +201,16 @@ export default function HomeScreen() {
 }
 
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-  },
-  content: {
-    paddingHorizontal: Spacing.lg,
-  },
-  balanceSection: {
-    gap: Spacing.md,
-  },
-  cryptoBalances: {
-    flexDirection: "row",
-    gap: Spacing.md,
-  },
-  cryptoCard: {
-    flex: 1,
-  },
+  container: { flex: 1 },
+  content: { paddingHorizontal: Spacing.lg },
+  balanceSection: { gap: Spacing.md },
+  cryptoBalances: { flexDirection: "row", gap: Spacing.md },
+  cryptoCard: { flex: 1 },
   actionsSection: {
     flexDirection: "row",
     justifyContent: "space-around",
     paddingVertical: Spacing["2xl"],
     marginTop: Spacing.lg,
   },
-  transactionsList: {
-    gap: Spacing.sm,
-  },
+  transactionsList: { gap: Spacing.sm },
 });
