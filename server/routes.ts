@@ -515,6 +515,165 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // ============ Payment Request Actions ============
+  app.patch("/api/payment-requests/:id", async (req, res) => {
+    try {
+      const userId = req.headers["x-user-id"] as string;
+      if (!userId) return res.status(401).json({ message: "Unauthorized" });
+
+      const { action } = req.body as { action: "approve" | "decline" };
+      if (!["approve", "decline"].includes(action)) {
+        return res.status(400).json({ message: "Invalid action" });
+      }
+
+      const request = await db.query.paymentRequests.findFirst({
+        where: eq(paymentRequests.id, req.params.id),
+      });
+      if (!request) return res.status(404).json({ message: "Request not found" });
+      if (request.toUserId !== userId) {
+        return res.status(403).json({ message: "Not your request" });
+      }
+      if (request.status !== "pending") {
+        return res.status(400).json({ message: `Request already ${request.status}` });
+      }
+
+      if (action === "decline") {
+        await db.update(paymentRequests).set({ status: "declined" }).where(eq(paymentRequests.id, request.id));
+        await db.insert(auditLogs).values({
+          userId, action: "PAYMENT_REQUEST_DECLINED",
+          details: { requestId: request.id }, ipAddress: req.ip, userAgent: req.get("user-agent"),
+        });
+        return res.json({ success: true, status: "declined" });
+      }
+
+      // approve → create transaction, mark approved
+      const idempotencyKey = `req_${request.id}_${Date.now()}`;
+      const [tx] = await db.insert(transactions).values({
+        fromUserId: userId,
+        toUserId: request.fromUserId,
+        type: "send",
+        fundType: request.fundType,
+        amount: request.amount,
+        fee: request.fundType === "internet_funds" ? "0" : "0.001",
+        status: "completed",
+        description: request.description || "Payment request settlement",
+        idempotencyKey,
+      }).returning();
+
+      await db.update(paymentRequests).set({ status: "approved" }).where(eq(paymentRequests.id, request.id));
+      await db.insert(auditLogs).values({
+        userId, action: "PAYMENT_REQUEST_APPROVED",
+        details: { requestId: request.id, transactionId: tx.id }, ipAddress: req.ip, userAgent: req.get("user-agent"),
+      });
+      res.json({ success: true, status: "approved", transaction: tx });
+    } catch (error) {
+      console.error("Payment request action error:", error);
+      res.status(500).json({ message: "Failed to update request" });
+    }
+  });
+
+  // ============ Admin Routes ============
+  async function requireAdmin(req: any, res: any): Promise<string | null> {
+    const userId = req.headers["x-user-id"] as string;
+    if (!userId) { res.status(401).json({ message: "Unauthorized" }); return null; }
+    const u = await db.query.users.findFirst({ where: eq(users.id, userId) });
+    if (!u || !u.isAdmin) { res.status(403).json({ message: "Admin access required" }); return null; }
+    return userId;
+  }
+
+  app.get("/api/admin/users", async (req, res) => {
+    const adminId = await requireAdmin(req, res); if (!adminId) return;
+    try {
+      const all = await db.query.users.findMany({
+        orderBy: (u, { desc }) => [desc(u.createdAt)],
+      });
+      res.json(all.map((u) => ({
+        id: u.id, username: u.username, email: u.email,
+        isAdmin: u.isAdmin, isFrozen: u.isFrozen,
+        twoFactorEnabled: u.twoFactorEnabled, createdAt: u.createdAt,
+      })));
+    } catch (e) { console.error(e); res.status(500).json({ message: "Failed to load users" }); }
+  });
+
+  app.patch("/api/admin/users/:id/freeze", async (req, res) => {
+    const adminId = await requireAdmin(req, res); if (!adminId) return;
+    try {
+      const { frozen } = req.body as { frozen: boolean };
+      if (req.params.id === adminId && frozen) {
+        return res.status(400).json({ message: "You cannot freeze your own admin account" });
+      }
+      await db.update(users).set({ isFrozen: !!frozen }).where(eq(users.id, req.params.id));
+      await db.insert(auditLogs).values({
+        userId: adminId, action: frozen ? "ADMIN_USER_FROZEN" : "ADMIN_USER_UNFROZEN",
+        details: { targetUserId: req.params.id }, ipAddress: req.ip, userAgent: req.get("user-agent"),
+      });
+      res.json({ success: true });
+    } catch (e) { console.error(e); res.status(500).json({ message: "Failed to update user" }); }
+  });
+
+  app.get("/api/admin/cards/pending", async (req, res) => {
+    const adminId = await requireAdmin(req, res); if (!adminId) return;
+    try {
+      const pending = await db.query.cards.findMany({
+        where: eq(cards.status, "pending_approval"),
+        orderBy: (c, { desc }) => [desc(c.createdAt)],
+      });
+      const enriched = await Promise.all(pending.map(async (c) => {
+        const owner = await db.query.users.findFirst({ where: eq(users.id, c.userId) });
+        return {
+          id: c.id, lastFourDigits: c.lastFourDigits, cardType: c.cardType,
+          expiryDate: c.expiryDate, dailyLimit: c.dailyLimit, createdAt: c.createdAt,
+          ownerUsername: owner?.username || "—", ownerEmail: owner?.email || "—",
+        };
+      }));
+      res.json(enriched);
+    } catch (e) { console.error(e); res.status(500).json({ message: "Failed to load pending cards" }); }
+  });
+
+  app.patch("/api/admin/cards/:id/approve", async (req, res) => {
+    const adminId = await requireAdmin(req, res); if (!adminId) return;
+    try {
+      const { approve } = req.body as { approve: boolean };
+      const newStatus = approve ? "active" : "rejected";
+      await db.update(cards).set({ status: newStatus }).where(eq(cards.id, req.params.id));
+      await db.insert(auditLogs).values({
+        userId: adminId, action: approve ? "ADMIN_CARD_APPROVED" : "ADMIN_CARD_REJECTED",
+        details: { cardId: req.params.id }, ipAddress: req.ip, userAgent: req.get("user-agent"),
+      });
+      res.json({ success: true, status: newStatus });
+    } catch (e) { console.error(e); res.status(500).json({ message: "Failed to update card" }); }
+  });
+
+  app.get("/api/admin/stats", async (req, res) => {
+    const adminId = await requireAdmin(req, res); if (!adminId) return;
+    try {
+      const [allUsers, allTx, allCards, allReqs] = await Promise.all([
+        db.query.users.findMany(),
+        db.query.transactions.findMany(),
+        db.query.cards.findMany(),
+        db.query.paymentRequests.findMany(),
+      ]);
+      const sumByFund = (fund: string) => allTx
+        .filter((t) => t.fundType === fund && t.status === "completed")
+        .reduce((s, t) => s + parseFloat(t.amount), 0);
+      res.json({
+        totalUsers: allUsers.length,
+        frozenUsers: allUsers.filter((u) => u.isFrozen).length,
+        adminUsers: allUsers.filter((u) => u.isAdmin).length,
+        totalTransactions: allTx.length,
+        completedTransactions: allTx.filter((t) => t.status === "completed").length,
+        totalCards: allCards.length,
+        activeCards: allCards.filter((c) => c.status === "active").length,
+        pendingCards: allCards.filter((c) => c.status === "pending_approval").length,
+        frozenCards: allCards.filter((c) => c.status === "frozen").length,
+        pendingRequests: allReqs.filter((r) => r.status === "pending").length,
+        volumeInternetFunds: sumByFund("internet_funds").toFixed(2),
+        volumeGyd: sumByFund("gyd").toFixed(2),
+        volumeGyds: sumByFund("gyds").toFixed(2),
+      });
+    } catch (e) { console.error(e); res.status(500).json({ message: "Failed to load stats" }); }
+  });
+
   const httpServer = createServer(app);
   return httpServer;
 }

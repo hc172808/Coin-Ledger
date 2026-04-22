@@ -257,9 +257,19 @@ export default function ProfileScreen() {
         <SectionHeader title="Account" />
         <View style={styles.settingsGroup}>
           <SettingsItem icon="user" label="Personal Information" onPress={() => setActiveModal("personal-info")} />
+          <SettingsItem icon="inbox" label="Payment Requests" onPress={() => (navigation as any).navigate("PaymentRequests")} />
           <SettingsItem icon="credit-card" label="Payment Methods" onPress={goToCards} />
           <SettingsItem icon="file-text" label="Transaction Limits" onPress={() => setActiveModal("transaction-limits")} />
         </View>
+
+        {(user as any)?.isAdmin ? (
+          <>
+            <SectionHeader title="Administration" />
+            <View style={styles.settingsGroup}>
+              <SettingsItem icon="shield" label="Admin Panel" onPress={() => (navigation as any).navigate("Admin")} />
+            </View>
+          </>
+        ) : null}
 
         <SectionHeader title="Support" />
         <View style={styles.settingsGroup}>
