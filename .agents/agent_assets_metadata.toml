@@ -1,0 +1,14 @@
+uploads = []
+generated = []
+
+[[outputs]]
+id = "C1DgwbfM5AZyhpIs1zJn7"
+uri = "file://exports/gyds-banking-source.tar.gz"
+type = "unspecified"
+title = "GYDS Banking — Source Code (open in Android Studio)"
+
+[[outputs]]
+id = "9PB6yhS7VtBZ3YqMHTGmW"
+uri = "file://BUILD_ANDROID.md"
+type = "text"
+title = "Android Build Instructions"

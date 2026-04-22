@@ -1,5 +1,5 @@
-import React, { useState } from "react";
-import { StyleSheet, View, Platform, Pressable, Modal } from "react-native";
+import React, { useEffect, useRef, useState } from "react";
+import { StyleSheet, View, Platform, Pressable, Modal, Animated, Easing, ActivityIndicator } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useHeaderHeight } from "@react-navigation/elements";
 import { Feather } from "@expo/vector-icons";
@@ -39,10 +39,26 @@ export default function SendMoneyScreen() {
   const [amount, setAmount] = useState("");
   const [description, setDescription] = useState("");
   const [isLoading, setIsLoading] = useState(false);
+  const [stage, setStage] = useState<"validating" | "carrying" | "confirming">("validating");
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [successModal, setSuccessModal] = useState(false);
   const [errorModal, setErrorModal] = useState(false);
   const [errorMsg, setErrorMsg] = useState("");
+
+  const planeAnim = useRef(new Animated.Value(0)).current;
+  useEffect(() => {
+    if (!isLoading) { planeAnim.setValue(0); return; }
+    const loop = Animated.loop(
+      Animated.timing(planeAnim, {
+        toValue: 1, duration: 1600, easing: Easing.linear, useNativeDriver: true,
+      }),
+    );
+    loop.start();
+    return () => loop.stop();
+  }, [isLoading, planeAnim]);
+
+  const planeTranslate = planeAnim.interpolate({ inputRange: [0, 1], outputRange: [-60, 60] });
+  const planeOpacity = planeAnim.interpolate({ inputRange: [0, 0.15, 0.85, 1], outputRange: [0, 1, 1, 0] });
 
   const getBalance = () => {
     if (!wallet) return "0.00";
@@ -71,16 +87,21 @@ export default function SendMoneyScreen() {
       if (Platform.OS !== "web") Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
       return;
     }
+    setStage("validating");
     setIsLoading(true);
     try {
+      await new Promise((r) => setTimeout(r, 350));
+      setStage("carrying");
       await apiRequest("POST", "/api/transactions/send", {
         recipient: recipient.trim(),
         amount: parseFloat(amount),
         fundType,
         description: description.trim() || undefined,
       });
+      setStage("confirming");
       if (Platform.OS !== "web") Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
       await refreshWallet();
+      await new Promise((r) => setTimeout(r, 250));
       setSuccessModal(true);
     } catch (e: any) {
       if (Platform.OS !== "web") Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
@@ -192,6 +213,37 @@ export default function SendMoneyScreen() {
         </View>
       </KeyboardAwareScrollViewCompat>
 
+      <Modal visible={isLoading} transparent animationType="fade" onRequestClose={() => {}}>
+        <View style={styles.modalOverlay}>
+          <View style={[styles.loadingCard, { backgroundColor: theme.backgroundDefault }]}>
+            <View style={styles.flightStrip}>
+              <Feather name="user" size={20} color={theme.textSecondary} />
+              <View style={[styles.flightLine, { backgroundColor: theme.border }]} />
+              <Animated.View
+                style={[
+                  styles.flightPlane,
+                  { transform: [{ translateX: planeTranslate }], opacity: planeOpacity },
+                ]}
+              >
+                <Feather name="send" size={22} color={theme.primary} />
+              </Animated.View>
+              <Feather name="user-check" size={20} color={theme.textSecondary} />
+            </View>
+            <ActivityIndicator size="small" color={theme.primary} />
+            <ThemedText type="h3" style={styles.modalTitle}>
+              {stage === "validating" ? "Validating transfer" : stage === "carrying" ? "Carrying your funds" : "Confirming transfer"}
+            </ThemedText>
+            <ThemedText style={[styles.modalMsg, { color: theme.textSecondary }]}>
+              {stage === "validating"
+                ? "Checking recipient and balance..."
+                : stage === "carrying"
+                ? `Sending ${currency === "$" ? "$" : ""}${amount}${currency !== "$" ? " " + currency : ""} to ${recipient}...`
+                : "Almost done — finalizing your transaction..."}
+            </ThemedText>
+          </View>
+        </View>
+      </Modal>
+
       <Modal visible={successModal} transparent animationType="fade" onRequestClose={() => {}}>
         <View style={styles.modalOverlay}>
           <View style={[styles.modalCard, { backgroundColor: theme.backgroundDefault }]}>
@@ -214,9 +266,13 @@ export default function SendMoneyScreen() {
       </Modal>
 
       <Modal visible={errorModal} transparent animationType="fade" onRequestClose={() => setErrorModal(false)}>
-        <View style={styles.modalOverlay}>
-          <View style={[styles.modalCard, { backgroundColor: theme.backgroundDefault }]}>
-            <View style={[styles.modalIconWrap, { backgroundColor: `${theme.error}20` }]}>
+        <View style={[styles.modalOverlay, { backgroundColor: "rgba(0,0,0,0.7)" }]}>
+          <View style={[styles.modalCard, styles.errorCard, { backgroundColor: theme.backgroundDefault, borderColor: theme.error }]}>
+            <View style={[styles.errorBanner, { backgroundColor: theme.error }]}>
+              <Feather name="alert-octagon" size={18} color="#fff" />
+              <ThemedText style={styles.errorBannerText}>TRANSFER BLOCKED</ThemedText>
+            </View>
+            <View style={[styles.modalIconWrap, { backgroundColor: `${theme.error}20`, marginTop: Spacing.md }]}>
               <Feather name="x-circle" size={32} color={theme.error} />
             </View>
             <ThemedText type="h3" style={styles.modalTitle}>Transfer Failed</ThemedText>
@@ -229,6 +285,13 @@ export default function SendMoneyScreen() {
               onPress={() => setErrorModal(false)}
             >
               <ThemedText style={{ color: "#fff", fontWeight: "600", fontSize: 15 }}>Try Again</ThemedText>
+            </Pressable>
+            <Pressable
+              testID="button-cancel-error"
+              style={[styles.modalBtn, { backgroundColor: "transparent", marginTop: 0 }]}
+              onPress={() => { setErrorModal(false); navigation.goBack(); }}
+            >
+              <ThemedText style={{ color: theme.textSecondary, fontWeight: "500", fontSize: 14 }}>Cancel</ThemedText>
             </Pressable>
           </View>
         </View>
@@ -295,5 +358,56 @@ const styles = StyleSheet.create({
     borderRadius: BorderRadius.lg,
     alignItems: "center",
     marginTop: Spacing.sm,
+  },
+  loadingCard: {
+    width: "100%",
+    borderRadius: BorderRadius.xl,
+    padding: Spacing.xl,
+    alignItems: "center",
+    gap: Spacing.md,
+  },
+  flightStrip: {
+    width: "100%",
+    height: 60,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    paddingHorizontal: Spacing.sm,
+    position: "relative",
+  },
+  flightLine: {
+    position: "absolute",
+    left: 36,
+    right: 36,
+    height: 2,
+    top: 29,
+  },
+  flightPlane: {
+    position: "absolute",
+    left: "50%",
+    marginLeft: -11,
+    top: 19,
+  },
+  errorCard: {
+    borderWidth: 2,
+    paddingTop: 0,
+    overflow: "hidden",
+  },
+  errorBanner: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: Spacing.xs,
+    width: "100%",
+    paddingVertical: Spacing.sm,
+    marginHorizontal: -Spacing.xl,
+    marginTop: -Spacing.xl,
+    paddingHorizontal: Spacing.xl,
+  },
+  errorBannerText: {
+    color: "#fff",
+    fontSize: 12,
+    fontWeight: "700",
+    letterSpacing: 1,
   },
 });

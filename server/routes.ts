@@ -286,6 +286,16 @@ export async function registerRoutes(app: Express): Promise<Server> {
       if (!recipient || !amount || !fundType) {
         return res.status(400).json({ message: "Missing required fields" });
       }
+      const numAmount = Number(amount);
+      if (!Number.isFinite(numAmount) || numAmount <= 0) {
+        return res.status(400).json({ message: "Invalid amount" });
+      }
+
+      const sender = await db.query.users.findFirst({ where: eq(users.id, userId) });
+      if (!sender) return res.status(404).json({ message: "User not found" });
+      if (sender.isFrozen) {
+        return res.status(403).json({ message: "Your account is frozen. Contact support to unfreeze." });
+      }
 
       const wallet = await db.query.wallets.findFirst({
         where: eq(wallets.userId, userId),
@@ -295,16 +305,51 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(404).json({ message: "Wallet not found" });
       }
 
+      const balanceField = fundType === "internet_funds" ? wallet.internetFundsBalance
+        : fundType === "gyd" ? wallet.gydBalance : wallet.gydsBalance;
+      if (parseFloat(balanceField) < numAmount) {
+        return res.status(400).json({ message: `Insufficient ${fundType === "internet_funds" ? "Internet Funds" : fundType.toUpperCase()} balance` });
+      }
+
+      // Resolve recipient: wallet address (0x...) OR username/email of an existing user
+      let toUserId: string | undefined;
+      let toAddress: string = String(recipient);
+      const isWalletAddress = /^0x[0-9a-fA-F]{40}$/.test(recipient);
+      if (isWalletAddress) {
+        const targetWallet = await db.query.wallets.findFirst({ where: eq(wallets.address, recipient) });
+        if (!targetWallet) {
+          return res.status(404).json({ message: "Recipient wallet address not found" });
+        }
+        toUserId = targetWallet.userId;
+      } else {
+        const targetUser = await db.query.users.findFirst({
+          where: or(eq(users.email, String(recipient).toLowerCase()), eq(users.username, String(recipient))),
+        });
+        if (!targetUser) {
+          return res.status(404).json({ message: "Recipient not found. Check the username, email, or wallet address." });
+        }
+        if (targetUser.id === userId) {
+          return res.status(400).json({ message: "You cannot send funds to yourself" });
+        }
+        if (targetUser.isFrozen) {
+          return res.status(403).json({ message: "Recipient account is frozen and cannot receive funds" });
+        }
+        toUserId = targetUser.id;
+        const targetWallet = await db.query.wallets.findFirst({ where: eq(wallets.userId, targetUser.id) });
+        if (targetWallet) toAddress = targetWallet.address;
+      }
+
       const idempotencyKey = `send_${userId}_${Date.now()}_${Math.random()}`;
 
       const [transaction] = await db
         .insert(transactions)
         .values({
           fromUserId: userId,
-          toAddress: recipient,
+          toUserId,
+          toAddress,
           type: "send",
           fundType,
-          amount: String(amount),
+          amount: String(numAmount),
           fee: fundType === "internet_funds" ? "0" : "0.001",
           status: "completed",
           description,
