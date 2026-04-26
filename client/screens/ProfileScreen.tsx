@@ -233,9 +233,11 @@ export default function ProfileScreen() {
               {user?.username?.charAt(0).toUpperCase() || "U"}
             </ThemedText>
           </View>
-          <ThemedText type="h3" style={styles.username}>{user?.username || "User"}</ThemedText>
-          <ThemedText style={[styles.email, { color: theme.textSecondary }]}>
-            {user?.email || "user@example.com"}
+          <ThemedText type="h3" style={styles.username} testID="text-username">
+            {user?.username ?? ""}
+          </ThemedText>
+          <ThemedText style={[styles.email, { color: theme.textSecondary }]} testID="text-email">
+            {user?.email ?? ""}
           </ThemedText>
         </View>
 

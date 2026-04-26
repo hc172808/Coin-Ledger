@@ -1,10 +1,11 @@
 import React, { useState } from "react";
-import { StyleSheet, View, Share, Platform, Pressable } from "react-native";
+import { StyleSheet, View, Share, Platform, Pressable, ActivityIndicator } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useHeaderHeight } from "@react-navigation/elements";
 import { Feather } from "@expo/vector-icons";
 import * as Haptics from "expo-haptics";
 import * as Clipboard from "expo-clipboard";
+import QRCode from "react-native-qrcode-svg";
 
 import { KeyboardAwareScrollViewCompat } from "@/components/KeyboardAwareScrollViewCompat";
 import { ThemedText } from "@/components/ThemedText";
@@ -25,12 +26,14 @@ export default function ReceiveMoneyScreen() {
   const [fundType, setFundType] = useState<FundType>("internet_funds");
   const [copied, setCopied] = useState(false);
 
-  const getAddress = () => {
+  const getAddress = (): string | null => {
     if (fundType === "internet_funds") {
-      return user?.email || "user@example.com";
+      return user?.email ?? null;
     }
-    return wallet?.address || "0x1234...abcd";
+    return wallet?.address ?? null;
   };
+
+  const address = getAddress();
 
   const getLabel = () => {
     switch (fundType) {
@@ -43,7 +46,8 @@ export default function ReceiveMoneyScreen() {
   };
 
   const handleCopy = async () => {
-    await Clipboard.setStringAsync(getAddress());
+    if (!address) return;
+    await Clipboard.setStringAsync(address);
     if (Platform.OS !== "web") {
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
     }
@@ -94,11 +98,22 @@ export default function ReceiveMoneyScreen() {
       </View>
 
       <View style={[styles.qrContainer, { backgroundColor: theme.backgroundDefault }]}>
-        <View style={[styles.qrPlaceholder, { backgroundColor: theme.backgroundSecondary }]}>
-          <Feather name="grid" size={80} color={theme.textSecondary} />
-          <ThemedText style={[styles.qrLabel, { color: theme.textSecondary }]}>
-            QR Code
-          </ThemedText>
+        <View style={[styles.qrPlaceholder, { backgroundColor: "#ffffff" }]} testID="qr-code">
+          {address ? (
+            <QRCode
+              value={address}
+              size={200}
+              color={theme.text}
+              backgroundColor="#ffffff"
+            />
+          ) : (
+            <View style={styles.qrLoading}>
+              <ActivityIndicator size="large" color={theme.primary} />
+              <ThemedText style={[styles.qrLabel, { color: theme.textSecondary }]}>
+                {fundType === "internet_funds" ? "Loading account..." : "Loading wallet..."}
+              </ThemedText>
+            </View>
+          )}
         </View>
       </View>
 
@@ -175,6 +190,10 @@ const styles = StyleSheet.create({
   qrLabel: {
     fontSize: 14,
     marginTop: Spacing.sm,
+  },
+  qrLoading: {
+    alignItems: "center",
+    justifyContent: "center",
   },
   addressLabel: {
     fontSize: 14,
