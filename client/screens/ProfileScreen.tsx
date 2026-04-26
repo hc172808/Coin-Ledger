@@ -86,7 +86,7 @@ export default function ProfileScreen() {
   const headerHeight = useHeaderHeight();
   const tabBarHeight = useBottomTabBarHeight();
   const { theme } = useTheme();
-  const { user, logout } = useAuth();
+  const { user, logout, updateProfile } = useAuth();
   const navigation = useNavigation();
 
   const [twoFactorEnabled, setTwoFactorEnabled] = useState(user?.twoFactorEnabled || false);
@@ -113,6 +113,12 @@ export default function ProfileScreen() {
   const [supportMessage, setSupportMessage] = useState("");
   const [supportError, setSupportError] = useState("");
 
+  // Personal Information (edit)
+  const [editUsername, setEditUsername] = useState("");
+  const [editEmail, setEditEmail] = useState("");
+  const [editCurrentPwd, setEditCurrentPwd] = useState("");
+  const [profileError, setProfileError] = useState("");
+
   const [submitting, setSubmitting] = useState(false);
 
   const showToast = (message: string) => {
@@ -126,6 +132,43 @@ export default function ProfileScreen() {
     setCurrentPin(""); setNewPin(""); setConfirmPin(""); setPinError("");
     setCurrentPwd(""); setNewPwd(""); setConfirmPwd(""); setPwdError("");
     setSupportSubject(""); setSupportMessage(""); setSupportError("");
+    setEditUsername(""); setEditEmail(""); setEditCurrentPwd(""); setProfileError("");
+  };
+
+  const openPersonalInfo = () => {
+    setEditUsername(user?.username ?? "");
+    setEditEmail(user?.email ?? "");
+    setEditCurrentPwd("");
+    setProfileError("");
+    setActiveModal("personal-info");
+  };
+
+  const submitProfile = async () => {
+    setProfileError("");
+    const trimmedUsername = editUsername.trim();
+    const trimmedEmail = editEmail.trim();
+    if (trimmedUsername.length < 3) return setProfileError("Username must be at least 3 characters");
+    if (!/^[a-zA-Z0-9_.-]+$/.test(trimmedUsername)) return setProfileError("Username can only contain letters, numbers, dots, underscores and hyphens");
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(trimmedEmail)) return setProfileError("Enter a valid email address");
+    const noChange = trimmedUsername === user?.username && trimmedEmail.toLowerCase() === user?.email?.toLowerCase();
+    if (noChange) {
+      closeModal();
+      showToast("No changes to save.");
+      return;
+    }
+    if (!editCurrentPwd) return setProfileError("Enter your current password to confirm changes");
+    setSubmitting(true);
+    try {
+      await updateProfile({ username: trimmedUsername, email: trimmedEmail, currentPassword: editCurrentPwd });
+      if (Platform.OS !== "web") Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+      closeModal();
+      showToast("Profile updated.");
+    } catch (e: any) {
+      const raw = e?.message || "";
+      setProfileError(raw.includes(":") ? raw.split(": ").slice(1).join(": ") : "Could not update profile. Please try again.");
+    } finally {
+      setSubmitting(false);
+    }
   };
 
   const handleToggle2FA = async (enabled: boolean) => {
@@ -258,7 +301,7 @@ export default function ProfileScreen() {
 
         <SectionHeader title="Account" />
         <View style={styles.settingsGroup}>
-          <SettingsItem icon="user" label="Personal Information" onPress={() => setActiveModal("personal-info")} />
+          <SettingsItem icon="user" label="Personal Information" onPress={openPersonalInfo} />
           <SettingsItem icon="inbox" label="Payment Requests" onPress={() => (navigation as any).navigate("PaymentRequests")} />
           <SettingsItem icon="credit-card" label="Payment Methods" onPress={goToCards} />
           <SettingsItem icon="file-text" label="Transaction Limits" onPress={() => setActiveModal("transaction-limits")} />
@@ -343,20 +386,65 @@ export default function ProfileScreen() {
         <View style={styles.sheetOverlay}>
           <View style={[styles.sheet, { backgroundColor: theme.backgroundDefault }]}>
             <ThemedText type="h3" style={styles.sheetTitle}>Personal Information</ThemedText>
-            <InfoRow label="Username" value={user?.username || "—"} theme={theme} />
-            <InfoRow label="Email" value={user?.email || "—"} theme={theme} />
-            <InfoRow label="Account ID" value={user?.id?.slice(0, 12) + "..." || "—"} theme={theme} />
-            <InfoRow label="Role" value={(user as any)?.role === "admin" ? "Administrator" : "Standard User"} theme={theme} />
-            <InfoRow label="2FA" value={twoFactorEnabled ? "Enabled" : "Disabled"} theme={theme} />
+
+            <ThemedText style={[styles.fieldLabel, { color: theme.textSecondary }]}>Username</ThemedText>
+            <TextInput
+              testID="input-username"
+              value={editUsername}
+              onChangeText={setEditUsername}
+              autoCapitalize="none"
+              autoCorrect={false}
+              maxLength={32}
+              placeholder="your_username"
+              placeholderTextColor={theme.textSecondary}
+              style={[styles.input, { backgroundColor: theme.backgroundSecondary, color: theme.text }]}
+            />
+
+            <ThemedText style={[styles.fieldLabel, { color: theme.textSecondary }]}>Email</ThemedText>
+            <TextInput
+              testID="input-email"
+              value={editEmail}
+              onChangeText={setEditEmail}
+              autoCapitalize="none"
+              autoCorrect={false}
+              keyboardType="email-address"
+              placeholder="you@example.com"
+              placeholderTextColor={theme.textSecondary}
+              style={[styles.input, { backgroundColor: theme.backgroundSecondary, color: theme.text }]}
+            />
+
+            <ThemedText style={[styles.fieldLabel, { color: theme.textSecondary }]}>Confirm with Current Password</ThemedText>
+            <TextInput
+              testID="input-confirm-password"
+              value={editCurrentPwd}
+              onChangeText={setEditCurrentPwd}
+              autoCapitalize="none"
+              autoCorrect={false}
+              secureTextEntry
+              placeholder="Required to save changes"
+              placeholderTextColor={theme.textSecondary}
+              style={[styles.input, { backgroundColor: theme.backgroundSecondary, color: theme.text }]}
+            />
+
+            {profileError ? (
+              <ThemedText testID="text-profile-error" style={[styles.errText, { color: theme.error }]}>{profileError}</ThemedText>
+            ) : null}
+
             <View style={[styles.infoBox, { backgroundColor: theme.backgroundSecondary }]}>
               <Feather name="info" size={14} color={theme.primary} />
               <ThemedText style={[styles.infoBoxText, { color: theme.textSecondary }]}>
-                To update your personal details, please contact support.
+                Account ID {user?.id?.slice(0, 12)}…  ·  {(user as any)?.isAdmin ? "Administrator" : "Standard User"}  ·  2FA {twoFactorEnabled ? "On" : "Off"}
               </ThemedText>
             </View>
-            <Pressable testID="button-close-personal-info" style={[styles.fullBtn, { backgroundColor: theme.primary }]} onPress={closeModal}>
-              <ThemedText style={styles.fullBtnText}>Close</ThemedText>
-            </Pressable>
+
+            <SheetActions
+              onCancel={closeModal}
+              onSubmit={submitProfile}
+              submitLabel={submitting ? "Saving..." : "Save Changes"}
+              disabled={submitting}
+              theme={theme}
+              testIDPrefix="personal-info"
+            />
           </View>
         </View>
       </Modal>

@@ -242,6 +242,102 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  app.patch("/api/auth/profile", async (req, res) => {
+    try {
+      const userId = req.headers["x-user-id"] as string;
+      if (!userId) {
+        return res.status(401).json({ message: "Unauthorized" });
+      }
+
+      const { username, email, currentPassword } = req.body ?? {};
+      if (typeof username !== "string" || typeof email !== "string" || typeof currentPassword !== "string") {
+        return res.status(400).json({ message: "Username, email and current password are required" });
+      }
+
+      const trimmedUsername = username.trim();
+      const trimmedEmail = email.trim().toLowerCase();
+
+      if (trimmedUsername.length < 3) {
+        return res.status(400).json({ message: "Username must be at least 3 characters" });
+      }
+      if (trimmedUsername.length > 32) {
+        return res.status(400).json({ message: "Username must be 32 characters or fewer" });
+      }
+      if (!/^[a-zA-Z0-9_.-]+$/.test(trimmedUsername)) {
+        return res.status(400).json({ message: "Username can only contain letters, numbers, dots, underscores and hyphens" });
+      }
+      if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(trimmedEmail)) {
+        return res.status(400).json({ message: "Enter a valid email address" });
+      }
+
+      const user = await db.query.users.findFirst({ where: eq(users.id, userId) });
+      if (!user) {
+        return res.status(404).json({ message: "User not found" });
+      }
+      if (user.password !== hashPassword(currentPassword)) {
+        return res.status(401).json({ message: "Current password is incorrect" });
+      }
+
+      const usernameChanged = trimmedUsername !== user.username;
+      const emailChanged = trimmedEmail !== user.email;
+
+      if (!usernameChanged && !emailChanged) {
+        return res.json({
+          user: {
+            id: user.id,
+            username: user.username,
+            email: user.email,
+            isAdmin: user.isAdmin,
+            twoFactorEnabled: user.twoFactorEnabled,
+          },
+        });
+      }
+
+      if (usernameChanged) {
+        const taken = await db.query.users.findFirst({ where: eq(users.username, trimmedUsername) });
+        if (taken && taken.id !== userId) {
+          return res.status(409).json({ message: "That username is already taken" });
+        }
+      }
+      if (emailChanged) {
+        const taken = await db.query.users.findFirst({ where: eq(users.email, trimmedEmail) });
+        if (taken && taken.id !== userId) {
+          return res.status(409).json({ message: "That email is already in use" });
+        }
+      }
+
+      const [updated] = await db
+        .update(users)
+        .set({ username: trimmedUsername, email: trimmedEmail })
+        .where(eq(users.id, userId))
+        .returning();
+
+      await db.insert(auditLogs).values({
+        userId,
+        action: "PROFILE_UPDATED",
+        details: {
+          previous: { username: user.username, email: user.email },
+          updated: { username: updated.username, email: updated.email },
+        },
+        ipAddress: req.ip,
+        userAgent: req.get("user-agent"),
+      });
+
+      res.json({
+        user: {
+          id: updated.id,
+          username: updated.username,
+          email: updated.email,
+          isAdmin: updated.isAdmin,
+          twoFactorEnabled: updated.twoFactorEnabled,
+        },
+      });
+    } catch (error) {
+      console.error("Update profile error:", error);
+      res.status(500).json({ message: "Failed to update profile" });
+    }
+  });
+
   app.patch("/api/auth/change-password", async (req, res) => {
     try {
       const userId = req.headers["x-user-id"] as string;

@@ -27,6 +27,7 @@ interface AuthContextType {
   register: (username: string, email: string, password: string, pin: string) => Promise<void>;
   logout: () => Promise<void>;
   refreshWallet: () => Promise<void>;
+  updateProfile: (input: { username: string; email: string; currentPassword: string }) => Promise<User>;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
@@ -88,6 +89,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setWallet(null);
   }
 
+  async function updateProfile(input: { username: string; email: string; currentPassword: string }) {
+    const response = await apiRequest("PATCH", "/api/auth/profile", input);
+    const data = await response.json();
+    await saveUserData(data.user);
+    setUser(data.user);
+    return data.user as User;
+  }
+
   async function refreshWallet() {
     try {
       const res = await apiRequest("GET", "/api/wallet");
@@ -111,6 +120,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         register,
         logout,
         refreshWallet,
+        updateProfile,
       }}
     >
       {children}
