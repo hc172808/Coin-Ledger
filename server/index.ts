@@ -198,9 +198,10 @@ function configureExpoAndLanding(app: express.Application) {
     changeOrigin: true,
     ws: true,
     on: {
-      error: (_err: Error, _req: Request, res: Response) => {
-        if (res && typeof (res as Response).status === "function") {
-          (res as Response).status(503).send("Metro bundler not available. Start the frontend workflow.");
+      error: (_err, _req, res) => {
+        const httpRes = res as Response;
+        if (httpRes && typeof httpRes.status === "function") {
+          httpRes.status(503).send("Metro bundler not available. Start the frontend workflow.");
         }
       },
     },
