@@ -198,6 +198,10 @@ function configureExpoAndLanding(app: express.Application) {
     changeOrigin: true,
     ws: true,
     on: {
+      proxyReq: (proxyReq) => {
+        proxyReq.removeHeader("origin");
+        proxyReq.removeHeader("referer");
+      },
       error: (_err, _req, res) => {
         const httpRes = res as Response;
         if (httpRes && typeof httpRes.status === "function") {
