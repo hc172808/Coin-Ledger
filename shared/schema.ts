@@ -14,6 +14,7 @@ export const users = pgTable("users", {
   isAdmin: boolean("is_admin").default(false).notNull(),
   twoFactorEnabled: boolean("two_factor_enabled").default(false).notNull(),
   isFrozen: boolean("is_frozen").default(false).notNull(),
+  profileUpdatedAt: timestamp("profile_updated_at"),
   createdAt: timestamp("created_at").defaultNow().notNull(),
 });
 

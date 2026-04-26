@@ -9,6 +9,8 @@ function hashPassword(password: string): string {
   return createHash("sha256").update(password).digest("hex");
 }
 
+const ONE_YEAR_MS = 365 * 24 * 60 * 60 * 1000;
+
 function generateWalletAddress(): string {
   const bytes = randomUUID().replace(/-/g, "");
   return `0x${bytes.slice(0, 40)}`;
@@ -83,6 +85,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
           email: user.email,
           isAdmin: user.isAdmin,
           twoFactorEnabled: user.twoFactorEnabled,
+          profileUpdatedAt: user.profileUpdatedAt,
+          nextProfileUpdateAt: user.profileUpdatedAt
+            ? new Date(user.profileUpdatedAt.getTime() + ONE_YEAR_MS).toISOString()
+            : null,
         },
         wallet: {
           id: wallet.id,
@@ -140,6 +146,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
           email: user.email,
           isAdmin: user.isAdmin,
           twoFactorEnabled: user.twoFactorEnabled,
+          profileUpdatedAt: user.profileUpdatedAt,
+          nextProfileUpdateAt: user.profileUpdatedAt
+            ? new Date(user.profileUpdatedAt.getTime() + ONE_YEAR_MS).toISOString()
+            : null,
         },
         wallet: wallet
           ? {
@@ -289,8 +299,28 @@ export async function registerRoutes(app: Express): Promise<Server> {
             email: user.email,
             isAdmin: user.isAdmin,
             twoFactorEnabled: user.twoFactorEnabled,
+            profileUpdatedAt: user.profileUpdatedAt,
+            nextProfileUpdateAt: user.profileUpdatedAt
+              ? new Date(user.profileUpdatedAt.getTime() + ONE_YEAR_MS).toISOString()
+              : null,
           },
         });
+      }
+
+      if (!user.isAdmin && user.profileUpdatedAt) {
+        const nextAllowed = new Date(user.profileUpdatedAt.getTime() + ONE_YEAR_MS);
+        if (nextAllowed.getTime() > Date.now()) {
+          const niceDate = nextAllowed.toLocaleDateString("en-US", {
+            year: "numeric",
+            month: "long",
+            day: "numeric",
+          });
+          return res.status(429).json({
+            message: `Personal information can only be changed once per year. You can update again on ${niceDate}.`,
+            nextProfileUpdateAt: nextAllowed.toISOString(),
+            profileUpdatedAt: user.profileUpdatedAt.toISOString(),
+          });
+        }
       }
 
       if (usernameChanged) {
@@ -306,9 +336,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
         }
       }
 
+      const now = new Date();
       const [updated] = await db
         .update(users)
-        .set({ username: trimmedUsername, email: trimmedEmail })
+        .set({ username: trimmedUsername, email: trimmedEmail, profileUpdatedAt: now })
         .where(eq(users.id, userId))
         .returning();
 
@@ -330,6 +361,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
           email: updated.email,
           isAdmin: updated.isAdmin,
           twoFactorEnabled: updated.twoFactorEnabled,
+          profileUpdatedAt: updated.profileUpdatedAt,
+          nextProfileUpdateAt: updated.profileUpdatedAt
+            ? new Date(updated.profileUpdatedAt.getTime() + ONE_YEAR_MS).toISOString()
+            : null,
         },
       });
     } catch (error) {

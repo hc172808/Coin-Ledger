@@ -8,6 +8,8 @@ interface User {
   email: string;
   isAdmin: boolean;
   twoFactorEnabled: boolean;
+  profileUpdatedAt?: string | null;
+  nextProfileUpdateAt?: string | null;
 }
 
 interface Wallet {

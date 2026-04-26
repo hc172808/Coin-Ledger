@@ -35,6 +35,7 @@ export class MemStorage implements IStorage {
       isAdmin: false,
       twoFactorEnabled: false,
       isFrozen: false,
+      profileUpdatedAt: null,
       createdAt: new Date(),
     };
     this.users.set(id, user);

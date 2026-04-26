@@ -143,8 +143,19 @@ export default function ProfileScreen() {
     setActiveModal("personal-info");
   };
 
+  const isAdmin = !!(user as any)?.isAdmin;
+  const nextProfileUpdateAt = user?.nextProfileUpdateAt ? new Date(user.nextProfileUpdateAt) : null;
+  const profileLocked = !isAdmin && !!nextProfileUpdateAt && nextProfileUpdateAt.getTime() > Date.now();
+  const formatLongDate = (d: Date) =>
+    d.toLocaleDateString(undefined, { year: "numeric", month: "long", day: "numeric" });
+
   const submitProfile = async () => {
     setProfileError("");
+    if (profileLocked && nextProfileUpdateAt) {
+      return setProfileError(
+        `Personal information can only be changed once per year. You can update again on ${formatLongDate(nextProfileUpdateAt)}.`
+      );
+    }
     const trimmedUsername = editUsername.trim();
     const trimmedEmail = editEmail.trim();
     if (trimmedUsername.length < 3) return setProfileError("Username must be at least 3 characters");
@@ -162,7 +173,7 @@ export default function ProfileScreen() {
       await updateProfile({ username: trimmedUsername, email: trimmedEmail, currentPassword: editCurrentPwd });
       if (Platform.OS !== "web") Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
       closeModal();
-      showToast("Profile updated.");
+      showToast("Profile updated. Your next change will be allowed in 1 year.");
     } catch (e: any) {
       const raw = e?.message || "";
       setProfileError(raw.includes(":") ? raw.split(": ").slice(1).join(": ") : "Could not update profile. Please try again.");
@@ -387,17 +398,31 @@ export default function ProfileScreen() {
           <View style={[styles.sheet, { backgroundColor: theme.backgroundDefault }]}>
             <ThemedText type="h3" style={styles.sheetTitle}>Personal Information</ThemedText>
 
+            {profileLocked && nextProfileUpdateAt ? (
+              <View testID="profile-lock-banner" style={[styles.infoBox, { backgroundColor: theme.backgroundSecondary, marginBottom: Spacing.sm }]}>
+                <Feather name="lock" size={14} color={theme.primary} />
+                <ThemedText style={[styles.infoBoxText, { color: theme.textSecondary }]}>
+                  Personal information can only be changed once per year. Your next update will be allowed on{" "}
+                  <ThemedText style={{ fontWeight: "600", color: theme.text }}>
+                    {formatLongDate(nextProfileUpdateAt)}
+                  </ThemedText>
+                  .
+                </ThemedText>
+              </View>
+            ) : null}
+
             <ThemedText style={[styles.fieldLabel, { color: theme.textSecondary }]}>Username</ThemedText>
             <TextInput
               testID="input-username"
               value={editUsername}
               onChangeText={setEditUsername}
+              editable={!profileLocked}
               autoCapitalize="none"
               autoCorrect={false}
               maxLength={32}
               placeholder="your_username"
               placeholderTextColor={theme.textSecondary}
-              style={[styles.input, { backgroundColor: theme.backgroundSecondary, color: theme.text }]}
+              style={[styles.input, { backgroundColor: theme.backgroundSecondary, color: theme.text, opacity: profileLocked ? 0.55 : 1 }]}
             />
 
             <ThemedText style={[styles.fieldLabel, { color: theme.textSecondary }]}>Email</ThemedText>
@@ -405,26 +430,31 @@ export default function ProfileScreen() {
               testID="input-email"
               value={editEmail}
               onChangeText={setEditEmail}
+              editable={!profileLocked}
               autoCapitalize="none"
               autoCorrect={false}
               keyboardType="email-address"
               placeholder="you@example.com"
               placeholderTextColor={theme.textSecondary}
-              style={[styles.input, { backgroundColor: theme.backgroundSecondary, color: theme.text }]}
+              style={[styles.input, { backgroundColor: theme.backgroundSecondary, color: theme.text, opacity: profileLocked ? 0.55 : 1 }]}
             />
 
-            <ThemedText style={[styles.fieldLabel, { color: theme.textSecondary }]}>Confirm with Current Password</ThemedText>
-            <TextInput
-              testID="input-confirm-password"
-              value={editCurrentPwd}
-              onChangeText={setEditCurrentPwd}
-              autoCapitalize="none"
-              autoCorrect={false}
-              secureTextEntry
-              placeholder="Required to save changes"
-              placeholderTextColor={theme.textSecondary}
-              style={[styles.input, { backgroundColor: theme.backgroundSecondary, color: theme.text }]}
-            />
+            {!profileLocked ? (
+              <>
+                <ThemedText style={[styles.fieldLabel, { color: theme.textSecondary }]}>Confirm with Current Password</ThemedText>
+                <TextInput
+                  testID="input-confirm-password"
+                  value={editCurrentPwd}
+                  onChangeText={setEditCurrentPwd}
+                  autoCapitalize="none"
+                  autoCorrect={false}
+                  secureTextEntry
+                  placeholder="Required to save changes"
+                  placeholderTextColor={theme.textSecondary}
+                  style={[styles.input, { backgroundColor: theme.backgroundSecondary, color: theme.text }]}
+                />
+              </>
+            ) : null}
 
             {profileError ? (
               <ThemedText testID="text-profile-error" style={[styles.errText, { color: theme.error }]}>{profileError}</ThemedText>
@@ -433,18 +463,29 @@ export default function ProfileScreen() {
             <View style={[styles.infoBox, { backgroundColor: theme.backgroundSecondary }]}>
               <Feather name="info" size={14} color={theme.primary} />
               <ThemedText style={[styles.infoBoxText, { color: theme.textSecondary }]}>
-                Account ID {user?.id?.slice(0, 12)}…  ·  {(user as any)?.isAdmin ? "Administrator" : "Standard User"}  ·  2FA {twoFactorEnabled ? "On" : "Off"}
+                Account ID {user?.id?.slice(0, 12)}…  ·  {isAdmin ? "Administrator" : "Standard User"}  ·  2FA {twoFactorEnabled ? "On" : "Off"}
+                {user?.profileUpdatedAt ? `  ·  Last updated ${formatLongDate(new Date(user.profileUpdatedAt))}` : ""}
               </ThemedText>
             </View>
 
-            <SheetActions
-              onCancel={closeModal}
-              onSubmit={submitProfile}
-              submitLabel={submitting ? "Saving..." : "Save Changes"}
-              disabled={submitting}
-              theme={theme}
-              testIDPrefix="personal-info"
-            />
+            {profileLocked ? (
+              <Pressable
+                testID="button-close-personal-info-locked"
+                style={[styles.fullBtn, { backgroundColor: theme.primary }]}
+                onPress={closeModal}
+              >
+                <ThemedText style={styles.fullBtnText}>Close</ThemedText>
+              </Pressable>
+            ) : (
+              <SheetActions
+                onCancel={closeModal}
+                onSubmit={submitProfile}
+                submitLabel={submitting ? "Saving..." : "Save Changes"}
+                disabled={submitting}
+                theme={theme}
+                testIDPrefix="personal-info"
+              />
+            )}
           </View>
         </View>
       </Modal>
