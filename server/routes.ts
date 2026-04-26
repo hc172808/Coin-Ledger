@@ -61,9 +61,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
         .values({
           userId: user.id,
           address: generateWalletAddress(),
-          internetFundsBalance: "100.00",
-          gydBalance: "50.00000000",
-          gydsBalance: "10.00000000",
+          internetFundsBalance: "0.00",
+          gydBalance: "0.00000000",
+          gydsBalance: "0.00000000",
         })
         .returning();
 
