@@ -4,6 +4,7 @@ import { registerRoutes } from "./routes";
 import * as fs from "fs";
 import * as path from "path";
 import { createProxyMiddleware } from "http-proxy-middleware";
+import { getNetlifeGyStatus, syncAllOnChainBalances } from "./rpc";
 
 const app = express();
 const log = console.log;
@@ -250,6 +251,21 @@ function setupErrorHandler(app: express.Application) {
   configureExpoAndLanding(app);
 
   const server = await registerRoutes(app);
+
+  // Keep database GYD balances aligned with native balances on NetlifeGY.
+  try {
+    const status = await getNetlifeGyStatus();
+    log(`NetlifeGY RPC connected: chain ${status.chainId}, block ${status.blockNumber}`);
+    log(`Synced ${await syncAllOnChainBalances()} wallet balances from NetlifeGY`);
+  } catch (error) {
+    console.error("NetlifeGY RPC startup sync failed:", error);
+  }
+  const syncTimer = setInterval(() => {
+    syncAllOnChainBalances().catch((error) =>
+      console.error("NetlifeGY RPC periodic sync failed:", error),
+    );
+  }, 30_000);
+  syncTimer.unref();
 
   setupErrorHandler(app);
 

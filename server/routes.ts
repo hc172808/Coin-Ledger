@@ -4,6 +4,7 @@ import { db } from "./db";
 import { users, wallets, transactions, cards, paymentRequests, auditLogs } from "@shared/schema";
 import { eq, or } from "drizzle-orm";
 import { randomUUID, createHash } from "crypto";
+import { syncWalletOnChainBalance } from "./rpc";
 
 function hashPassword(password: string): string {
   return createHash("sha256").update(password).digest("hex");
@@ -182,12 +183,23 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(404).json({ message: "Wallet not found" });
       }
 
+      try {
+        await syncWalletOnChainBalance(wallet.id, wallet.address);
+      } catch (error) {
+        // Keep serving the last known balance if the node is temporarily unavailable.
+        console.error("On-chain wallet refresh failed:", error);
+      }
+
+      const refreshedWallet = await db.query.wallets.findFirst({
+        where: eq(wallets.id, wallet.id),
+      });
+
       res.json({
-        id: wallet.id,
-        gydBalance: wallet.gydBalance,
-        gydsBalance: wallet.gydsBalance,
-        internetFundsBalance: wallet.internetFundsBalance,
-        address: wallet.address,
+        id: refreshedWallet?.id ?? wallet.id,
+        gydBalance: refreshedWallet?.gydBalance ?? wallet.gydBalance,
+        gydsBalance: refreshedWallet?.gydsBalance ?? wallet.gydsBalance,
+        internetFundsBalance: refreshedWallet?.internetFundsBalance ?? wallet.internetFundsBalance,
+        address: refreshedWallet?.address ?? wallet.address,
       });
     } catch (error) {
       console.error("Wallet fetch error:", error);
