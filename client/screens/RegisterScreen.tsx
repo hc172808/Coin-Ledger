@@ -1,5 +1,5 @@
 import React, { useState } from "react";
-import { StyleSheet, View, Image, Alert, Platform } from "react-native";
+import { StyleSheet, View, Image, Alert, Platform, Pressable, TextInput } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import * as Haptics from "expo-haptics";
 import { NativeStackNavigationProp } from "@react-navigation/native-stack";
@@ -26,6 +26,9 @@ export default function RegisterScreen({ navigation }: RegisterScreenProps) {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [pin, setPin] = useState("");
+  const [walletMode, setWalletMode] = useState<"later" | "create" | "import" | "external">("later");
+  const [walletPrivateKey, setWalletPrivateKey] = useState("");
+  const [walletAddress, setWalletAddress] = useState("");
   const [isLoading, setIsLoading] = useState(false);
   const [errors, setErrors] = useState<Record<string, string>>({});
 
@@ -39,6 +42,8 @@ export default function RegisterScreen({ navigation }: RegisterScreenProps) {
     else if (password.length < 6) newErrors.password = "Password must be at least 6 characters";
     if (!pin) newErrors.pin = "PIN is required";
     else if (pin.length !== 6 || !/^\d+$/.test(pin)) newErrors.pin = "PIN must be 6 digits";
+    if (walletMode === "import" && !walletPrivateKey.trim()) newErrors.wallet = "Private key is required";
+    if (walletMode === "external" && !/^0x[0-9a-fA-F]{40}$/.test(walletAddress.trim())) newErrors.wallet = "Enter a valid 0x wallet address";
     setErrors(newErrors);
     return Object.keys(newErrors).length === 0;
   };
@@ -53,7 +58,17 @@ export default function RegisterScreen({ navigation }: RegisterScreenProps) {
 
     setIsLoading(true);
     try {
-      await register(username, email, password, pin);
+      const result = await register(username, email, password, pin, {
+        mode: walletMode,
+        ...(walletMode === "import" ? { privateKey: walletPrivateKey.trim() } : {}),
+        ...(walletMode === "external" ? { address: walletAddress.trim() } : {}),
+      });
+      if (result.walletPrivateKey) {
+        Alert.alert(
+          "Wallet Created — Save Your Private Key",
+          `${result.walletPrivateKey}\n\nThis key is shown once. Store it somewhere safe. Anyone with it controls this wallet.`,
+        );
+      }
       if (Platform.OS !== "web") {
         Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
       }
@@ -138,6 +153,58 @@ export default function RegisterScreen({ navigation }: RegisterScreenProps) {
           secureTextEntry
         />
 
+        <View style={styles.walletSection}>
+          <ThemedText type="h3">Wallet setup</ThemedText>
+          <ThemedText style={[styles.walletHint, { color: theme.textSecondary }]}>
+            Create or connect a wallet now, or set it up later from Profile.
+          </ThemedText>
+          <View style={styles.walletModes}>
+            {([
+              ["later", "Set up later"],
+              ["create", "Create new"],
+              ["import", "Import key"],
+              ["external", "Use address"],
+            ] as const).map(([value, label]) => (
+              <Pressable
+                key={value}
+                testID={`wallet-mode-${value}`}
+                onPress={() => setWalletMode(value)}
+                style={[styles.walletMode, { borderColor: walletMode === value ? theme.primary : theme.border, backgroundColor: walletMode === value ? `${theme.primary}16` : theme.backgroundSecondary }]}
+              >
+                <ThemedText style={{ color: walletMode === value ? theme.primary : theme.text, fontWeight: "600", fontSize: 13 }}>
+                  {label}
+                </ThemedText>
+              </Pressable>
+            ))}
+          </View>
+          {walletMode === "import" ? (
+            <TextInput
+              testID="input-wallet-private-key"
+              value={walletPrivateKey}
+              onChangeText={setWalletPrivateKey}
+              placeholder="0x private key"
+              placeholderTextColor={theme.textSecondary}
+              autoCapitalize="none"
+              autoCorrect={false}
+              secureTextEntry
+              style={[styles.walletInput, { backgroundColor: theme.backgroundSecondary, color: theme.text, borderColor: theme.border }]}
+            />
+          ) : null}
+          {walletMode === "external" ? (
+            <TextInput
+              testID="input-wallet-address"
+              value={walletAddress}
+              onChangeText={setWalletAddress}
+              placeholder="0x wallet address"
+              placeholderTextColor={theme.textSecondary}
+              autoCapitalize="none"
+              autoCorrect={false}
+              style={[styles.walletInput, { backgroundColor: theme.backgroundSecondary, color: theme.text, borderColor: theme.border }]}
+            />
+          ) : null}
+          {errors.wallet ? <ThemedText style={[styles.walletError, { color: theme.error }]}>{errors.wallet}</ThemedText> : null}
+        </View>
+
         <Button onPress={handleRegister} disabled={isLoading} style={styles.button}>
           {isLoading ? "Creating Account..." : "Create Account"}
         </Button>
@@ -185,6 +252,35 @@ const styles = StyleSheet.create({
   },
   form: {
     gap: Spacing.lg,
+  },
+  walletSection: {
+    gap: Spacing.sm,
+    marginTop: Spacing.sm,
+  },
+  walletHint: {
+    fontSize: 13,
+    lineHeight: 19,
+  },
+  walletModes: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: Spacing.sm,
+  },
+  walletMode: {
+    paddingHorizontal: Spacing.md,
+    paddingVertical: Spacing.sm,
+    borderWidth: 1,
+    borderRadius: 10,
+  },
+  walletInput: {
+    borderWidth: 1,
+    borderRadius: 10,
+    paddingHorizontal: Spacing.md,
+    paddingVertical: Spacing.md,
+    fontSize: 14,
+  },
+  walletError: {
+    fontSize: 13,
   },
   button: {
     marginTop: Spacing.lg,

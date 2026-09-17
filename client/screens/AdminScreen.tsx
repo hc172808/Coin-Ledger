@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useState } from "react";
-import { StyleSheet, View, ScrollView, Pressable, RefreshControl, Platform } from "react-native";
+import { StyleSheet, View, ScrollView, Pressable, RefreshControl, Platform, TextInput } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useHeaderHeight } from "@react-navigation/elements";
 import { Feather } from "@expo/vector-icons";
@@ -53,6 +53,10 @@ export default function AdminScreen() {
   const [actingId, setActingId] = useState<string | null>(null);
   const [toastMsg, setToastMsg] = useState("");
   const [toastVisible, setToastVisible] = useState(false);
+  const [rpcUrl, setRpcUrl] = useState("");
+  const [rpcBlock, setRpcBlock] = useState<number | null>(null);
+  const [rpcChainId, setRpcChainId] = useState<number | null>(null);
+  const [savingRpc, setSavingRpc] = useState(false);
 
   const showToast = (m: string) => {
     setToastMsg(m); setToastVisible(true);
@@ -69,6 +73,15 @@ export default function AdminScreen() {
       setStats(await s1.json());
       setUsers(await s2.json());
       setPendingCards(await s3.json());
+      try {
+        const rpcResponse = await apiRequest("GET", "/api/admin/rpc");
+        const rpc = await rpcResponse.json();
+        setRpcUrl(rpc.rpcUrl);
+        setRpcBlock(rpc.blockNumber);
+        setRpcChainId(rpc.chainId);
+      } catch {
+        showToast("RPC status is unavailable.");
+      }
     } catch (e) {
       console.error(e);
       showToast("Failed to load admin data.");
@@ -78,6 +91,24 @@ export default function AdminScreen() {
   useEffect(() => { fetchAll(); }, [fetchAll]);
 
   const onRefresh = async () => { setRefreshing(true); await fetchAll(); setRefreshing(false); };
+
+  const saveRpc = async () => {
+    if (!rpcUrl.trim()) return showToast("Enter an RPC URL.");
+    setSavingRpc(true);
+    try {
+      const response = await apiRequest("PATCH", "/api/admin/rpc", { rpcUrl: rpcUrl.trim() });
+      const data = await response.json();
+      setRpcUrl(data.rpcUrl);
+      setRpcBlock(data.blockNumber);
+      setRpcChainId(data.chainId);
+      showToast(`RPC updated and ${data.synced} wallets synced.`);
+    } catch (e: any) {
+      const raw = e?.message || "";
+      showToast(raw.includes(":") ? raw.split(": ").slice(1).join(": ") : "RPC update failed.");
+    } finally {
+      setSavingRpc(false);
+    }
+  };
 
   const toggleFreezeUser = async (u: AdminUser) => {
     if (u.id === user?.id) { showToast("You cannot freeze your own account."); return; }
@@ -142,6 +173,36 @@ export default function AdminScreen() {
       >
         {tab === "stats" && stats ? (
           <>
+            <ThemedText style={s.sectionTitle}>Blockchain RPC</ThemedText>
+            <View style={[s.rpcBox, { backgroundColor: theme.backgroundSecondary }]}>
+              <ThemedText style={[s.cardSub, { color: theme.textSecondary }]}>
+                This node is used to sync native GYD balances. Changing it validates the node and syncs all wallets.
+              </ThemedText>
+              <TextInput
+                testID="input-rpc-url"
+                value={rpcUrl}
+                onChangeText={setRpcUrl}
+                autoCapitalize="none"
+                autoCorrect={false}
+                keyboardType="url"
+                placeholder="https://rpc.example.com"
+                placeholderTextColor={theme.textSecondary}
+                style={[s.rpcInput, { color: theme.text, borderColor: theme.border, backgroundColor: theme.backgroundRoot }]}
+              />
+              <View style={s.rpcMeta}>
+                <ThemedText style={[s.cardSub, { color: theme.textSecondary }]}>
+                  {rpcChainId ? `Chain ${rpcChainId}` : "Chain unavailable"}{rpcBlock !== null ? ` · Block ${rpcBlock}` : ""}
+                </ThemedText>
+                <Pressable
+                  testID="button-save-rpc"
+                  disabled={savingRpc}
+                  onPress={saveRpc}
+                  style={[s.rpcButton, { backgroundColor: theme.primary, opacity: savingRpc ? 0.6 : 1 }]}
+                >
+                  <ThemedText style={s.rpcButtonText}>{savingRpc ? "Syncing..." : "Save & Sync"}</ThemedText>
+                </Pressable>
+              </View>
+            </View>
             <View style={s.statsGrid}>
               <StatCard label="Total Users" value={String(stats.totalUsers)} icon="users" theme={theme} color={theme.primary} />
               <StatCard label="Frozen Users" value={String(stats.frozenUsers)} icon="user-x" theme={theme} color={theme.error} />
@@ -317,6 +378,35 @@ const s = StyleSheet.create({
   volRow: {
     flexDirection: "row", justifyContent: "space-between",
     paddingVertical: Spacing.sm, borderBottomWidth: StyleSheet.hairlineWidth,
+  },
+  rpcBox: {
+    borderRadius: BorderRadius.lg,
+    padding: Spacing.lg,
+    marginBottom: Spacing.xl,
+    gap: Spacing.md,
+  },
+  rpcInput: {
+    borderWidth: 1,
+    borderRadius: BorderRadius.md,
+    paddingHorizontal: Spacing.md,
+    paddingVertical: Spacing.sm,
+    fontSize: 14,
+  },
+  rpcMeta: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: Spacing.md,
+  },
+  rpcButton: {
+    borderRadius: BorderRadius.md,
+    paddingHorizontal: Spacing.md,
+    paddingVertical: Spacing.sm,
+  },
+  rpcButtonText: {
+    color: "#fff",
+    fontWeight: "700",
+    fontSize: 13,
   },
   card: { borderRadius: BorderRadius.lg, padding: Spacing.lg, gap: Spacing.md, marginBottom: Spacing.md },
   cardRow: { flexDirection: "row", alignItems: "center", gap: Spacing.md },

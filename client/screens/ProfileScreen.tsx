@@ -4,6 +4,7 @@ import {
   View,
   Modal,
   Pressable,
+  Alert,
   Platform,
   TextInput,
   ScrollView,
@@ -44,6 +45,7 @@ type ModalType =
   | "change-pin"
   | "change-password"
   | "personal-info"
+  | "wallet-setup"
   | "transaction-limits"
   | "help-center"
   | "contact-support";
@@ -86,7 +88,7 @@ export default function ProfileScreen() {
   const headerHeight = useHeaderHeight();
   const tabBarHeight = useBottomTabBarHeight();
   const { theme } = useTheme();
-  const { user, logout, updateProfile } = useAuth();
+  const { user, wallet, logout, updateProfile, refreshWallet } = useAuth();
   const navigation = useNavigation();
 
   const [twoFactorEnabled, setTwoFactorEnabled] = useState(user?.twoFactorEnabled || false);
@@ -95,6 +97,10 @@ export default function ProfileScreen() {
   const [toastVisible, setToastVisible] = useState(false);
   const [logoutModalVisible, setLogoutModalVisible] = useState(false);
   const [activeModal, setActiveModal] = useState<ModalType>(null);
+  const [walletSetupMode, setWalletSetupMode] = useState<"create" | "import" | "external">("create");
+  const [walletPrivateKey, setWalletPrivateKey] = useState("");
+  const [walletAddress, setWalletAddress] = useState("");
+  const [walletError, setWalletError] = useState("");
 
   // Change PIN
   const [currentPin, setCurrentPin] = useState("");
@@ -133,6 +139,7 @@ export default function ProfileScreen() {
     setCurrentPwd(""); setNewPwd(""); setConfirmPwd(""); setPwdError("");
     setSupportSubject(""); setSupportMessage(""); setSupportError("");
     setEditUsername(""); setEditEmail(""); setEditCurrentPwd(""); setProfileError("");
+    setWalletPrivateKey(""); setWalletAddress(""); setWalletError("");
   };
 
   const openPersonalInfo = () => {
@@ -271,6 +278,38 @@ export default function ProfileScreen() {
     else showToast("Open the Cards tab below to manage cards.");
   };
 
+  const submitWalletSetup = async () => {
+    setWalletError("");
+    if (walletSetupMode === "import" && !walletPrivateKey.trim()) return setWalletError("Enter a private key");
+    if (walletSetupMode === "external" && !/^0x[0-9a-fA-F]{40}$/.test(walletAddress.trim())) {
+      return setWalletError("Enter a valid 0x wallet address");
+    }
+    setSubmitting(true);
+    try {
+      const response = await apiRequest("POST", "/api/wallet/setup", {
+        mode: walletSetupMode,
+        ...(walletSetupMode === "import" ? { privateKey: walletPrivateKey.trim() } : {}),
+        ...(walletSetupMode === "external" ? { address: walletAddress.trim() } : {}),
+      });
+      const data = await response.json();
+      await refreshWallet();
+      closeModal();
+      if (data.walletPrivateKey) {
+        Alert.alert(
+          "Wallet Created — Save Your Private Key",
+          `${data.walletPrivateKey}\n\nThis key is shown once. Store it somewhere safe. Anyone with it controls this wallet.`,
+        );
+      } else {
+        showToast("Wallet connected and balance synced.");
+      }
+    } catch (e: any) {
+      const raw = e?.message || "";
+      setWalletError(raw.includes(":") ? raw.split(": ").slice(1).join(": ") : "Could not set up wallet.");
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
   return (
     <>
       <KeyboardAwareScrollViewCompat
@@ -313,6 +352,12 @@ export default function ProfileScreen() {
         <SectionHeader title="Account" />
         <View style={styles.settingsGroup}>
           <SettingsItem icon="user" label="Personal Information" onPress={openPersonalInfo} />
+          <SettingsItem
+            icon="credit-card"
+            label="Wallet Setup"
+            value={wallet?.walletType === "pending" ? "Not set up" : "Connected"}
+            onPress={() => setActiveModal("wallet-setup")}
+          />
           <SettingsItem icon="inbox" label="Payment Requests" onPress={() => (navigation as any).navigate("PaymentRequests")} />
           <SettingsItem icon="credit-card" label="Payment Methods" onPress={goToCards} />
           <SettingsItem icon="file-text" label="Transaction Limits" onPress={() => setActiveModal("transaction-limits")} />
@@ -486,6 +531,61 @@ export default function ProfileScreen() {
                 testIDPrefix="personal-info"
               />
             )}
+          </View>
+        </View>
+      </Modal>
+
+      {/* Wallet Setup */}
+      <Modal visible={activeModal === "wallet-setup"} transparent animationType="slide" onRequestClose={closeModal}>
+        <View style={styles.sheetOverlay}>
+          <View style={[styles.sheet, { backgroundColor: theme.backgroundDefault }]}>
+            <ThemedText type="h3" style={styles.sheetTitle}>Wallet Setup</ThemedText>
+            <ThemedText style={[styles.modalMessage, { color: theme.textSecondary }]}>
+              Connect an existing address, import a private key, or create a new wallet. A new private key is shown only once.
+            </ThemedText>
+            <View style={styles.walletModeRow}>
+              {([
+                ["create", "Create"],
+                ["import", "Import"],
+                ["external", "Address"],
+              ] as const).map(([value, label]) => (
+                <Pressable
+                  key={value}
+                  testID={`profile-wallet-mode-${value}`}
+                  onPress={() => { setWalletSetupMode(value); setWalletError(""); }}
+                  style={[styles.walletModeBtn, { borderColor: walletSetupMode === value ? theme.primary : theme.border, backgroundColor: walletSetupMode === value ? `${theme.primary}16` : theme.backgroundSecondary }]}
+                >
+                  <ThemedText style={{ color: walletSetupMode === value ? theme.primary : theme.text, fontWeight: "600" }}>{label}</ThemedText>
+                </Pressable>
+              ))}
+            </View>
+            {walletSetupMode === "import" ? (
+              <TextInput
+                testID="input-profile-wallet-private-key"
+                value={walletPrivateKey}
+                onChangeText={setWalletPrivateKey}
+                placeholder="0x private key"
+                placeholderTextColor={theme.textSecondary}
+                autoCapitalize="none"
+                autoCorrect={false}
+                secureTextEntry
+                style={[styles.input, { backgroundColor: theme.backgroundSecondary, color: theme.text }]}
+              />
+            ) : null}
+            {walletSetupMode === "external" ? (
+              <TextInput
+                testID="input-profile-wallet-address"
+                value={walletAddress}
+                onChangeText={setWalletAddress}
+                placeholder="0x wallet address"
+                placeholderTextColor={theme.textSecondary}
+                autoCapitalize="none"
+                autoCorrect={false}
+                style={[styles.input, { backgroundColor: theme.backgroundSecondary, color: theme.text }]}
+              />
+            ) : null}
+            {walletError ? <ThemedText style={[styles.errText, { color: theme.error }]}>{walletError}</ThemedText> : null}
+            <SheetActions onCancel={closeModal} onSubmit={submitWalletSetup} submitLabel={submitting ? "Saving..." : "Save Wallet"} disabled={submitting} theme={theme} testIDPrefix="wallet-setup" />
           </View>
         </View>
       </Modal>
@@ -701,6 +801,8 @@ const styles = StyleSheet.create({
   },
   infoRowLabel: { fontSize: 14, flex: 1 },
   infoRowValue: { fontSize: 14, fontWeight: "600", flex: 1, textAlign: "right" },
+  walletModeRow: { flexDirection: "row", gap: Spacing.sm, marginVertical: Spacing.md },
+  walletModeBtn: { flex: 1, alignItems: "center", paddingVertical: Spacing.md, borderRadius: BorderRadius.md, borderWidth: 1 },
   fullBtn: {
     paddingVertical: Spacing.md, borderRadius: BorderRadius.lg,
     alignItems: "center", marginTop: Spacing.md,

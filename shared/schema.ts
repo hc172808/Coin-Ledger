@@ -27,7 +27,15 @@ export const wallets = pgTable("wallets", {
   gydsBalance: numeric("gyds_balance", { precision: 20, scale: 8 }).default("0").notNull(),
   internetFundsBalance: numeric("internet_funds_balance", { precision: 20, scale: 2 }).default("0").notNull(),
   address: text("address").notNull().unique(),
+  walletType: text("wallet_type").default("pending").notNull(),
+  encryptedPrivateKey: text("encrypted_private_key"),
   createdAt: timestamp("created_at").defaultNow().notNull(),
+});
+
+export const systemSettings = pgTable("system_settings", {
+  key: text("key").primaryKey(),
+  value: text("value").notNull(),
+  updatedAt: timestamp("updated_at").defaultNow().notNull(),
 });
 
 export const transactions = pgTable("transactions", {

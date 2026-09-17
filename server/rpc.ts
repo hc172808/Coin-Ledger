@@ -1,10 +1,11 @@
 import { db } from "./db";
-import { wallets } from "@shared/schema";
+import { systemSettings, wallets } from "@shared/schema";
 import { eq } from "drizzle-orm";
 
-export const NETLIFEGY_RPC_URL =
+export const DEFAULT_NETLIFEGY_RPC_URL =
   process.env.NETLIFEGY_RPC_URL || "https://rpc.netlifegy.com";
 export const NETLIFEGY_CHAIN_ID = 198282;
+const RPC_SETTING_KEY = "netlifegy_rpc_url";
 
 type RpcResponse<T> = {
   result?: T;
@@ -12,7 +13,7 @@ type RpcResponse<T> = {
 };
 
 async function rpcCall<T>(method: string, params: unknown[] = []): Promise<T> {
-  const response = await fetch(NETLIFEGY_RPC_URL, {
+  const response = await fetch(await getConfiguredRpcUrl(), {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({ jsonrpc: "2.0", id: Date.now(), method, params }),
@@ -31,6 +32,23 @@ async function rpcCall<T>(method: string, params: unknown[] = []): Promise<T> {
     throw new Error("RPC response did not include a result");
   }
   return payload.result;
+}
+
+export async function getConfiguredRpcUrl() {
+  const setting = await db.query.systemSettings.findFirst({
+    where: eq(systemSettings.key, RPC_SETTING_KEY),
+  });
+  return setting?.value || DEFAULT_NETLIFEGY_RPC_URL;
+}
+
+export async function setConfiguredRpcUrl(url: string) {
+  await db
+    .insert(systemSettings)
+    .values({ key: RPC_SETTING_KEY, value: url })
+    .onConflictDoUpdate({
+      target: systemSettings.key,
+      set: { value: url, updatedAt: new Date() },
+    });
 }
 
 function formatWeiAsGyd(value: string): string {
@@ -54,7 +72,7 @@ export async function getNetlifeGyStatus() {
   }
 
   return {
-    rpcUrl: NETLIFEGY_RPC_URL,
+    rpcUrl: await getConfiguredRpcUrl(),
     chainId: numericChainId,
     blockNumber: Number.parseInt(blockNumber, 16),
   };

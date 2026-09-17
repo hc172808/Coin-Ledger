@@ -4,7 +4,8 @@ import { db } from "./db";
 import { users, wallets, transactions, cards, paymentRequests, auditLogs } from "@shared/schema";
 import { eq, or } from "drizzle-orm";
 import { randomUUID, createHash } from "crypto";
-import { syncWalletOnChainBalance } from "./rpc";
+import { getConfiguredRpcUrl, getNetlifeGyStatus, setConfiguredRpcUrl, syncWalletOnChainBalance, syncAllOnChainBalances } from "./rpc";
+import { createManagedWallet, importManagedWallet, isWalletAddress } from "./wallet";
 
 function hashPassword(password: string): string {
   return createHash("sha256").update(password).digest("hex");
@@ -57,11 +58,45 @@ export async function registerRoutes(app: Express): Promise<Server> {
         })
         .returning();
 
+      const walletSetup = req.body.walletSetup as {
+        mode?: "later" | "create" | "import" | "external";
+        privateKey?: string;
+        address?: string;
+      } | undefined;
+      let address = generateWalletAddress();
+      let walletType = "pending";
+      let encryptedPrivateKey: string | null = null;
+      let oneTimePrivateKey: string | undefined;
+
+      try {
+        if (walletSetup?.mode === "create") {
+          const created = createManagedWallet();
+          address = created.address;
+          walletType = "managed";
+          encryptedPrivateKey = created.encryptedPrivateKey;
+          oneTimePrivateKey = created.privateKey;
+        } else if (walletSetup?.mode === "import") {
+          if (!walletSetup.privateKey) return res.status(400).json({ message: "Private key is required to import a wallet" });
+          const imported = importManagedWallet(walletSetup.privateKey);
+          address = imported.address;
+          walletType = "managed";
+          encryptedPrivateKey = imported.encryptedPrivateKey;
+        } else if (walletSetup?.mode === "external") {
+          if (!isWalletAddress(walletSetup.address)) return res.status(400).json({ message: "Enter a valid 0x wallet address" });
+          address = walletSetup.address;
+          walletType = "external";
+        }
+      } catch {
+        return res.status(400).json({ message: "Wallet setup is invalid" });
+      }
+
       const [wallet] = await db
         .insert(wallets)
         .values({
           userId: user.id,
-          address: generateWalletAddress(),
+          address,
+          walletType,
+          encryptedPrivateKey,
           internetFundsBalance: "0.00",
           gydBalance: "0.00000000",
           gydsBalance: "0.00000000",
@@ -97,7 +132,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
           gydsBalance: wallet.gydsBalance,
           internetFundsBalance: wallet.internetFundsBalance,
           address: wallet.address,
+          walletType: wallet.walletType,
         },
+        ...(oneTimePrivateKey ? { walletPrivateKey: oneTimePrivateKey } : {}),
       });
     } catch (error) {
       console.error("Registration error:", error);
@@ -200,10 +237,76 @@ export async function registerRoutes(app: Express): Promise<Server> {
         gydsBalance: refreshedWallet?.gydsBalance ?? wallet.gydsBalance,
         internetFundsBalance: refreshedWallet?.internetFundsBalance ?? wallet.internetFundsBalance,
         address: refreshedWallet?.address ?? wallet.address,
+        walletType: refreshedWallet?.walletType ?? wallet.walletType,
       });
     } catch (error) {
       console.error("Wallet fetch error:", error);
       res.status(500).json({ message: "Failed to fetch wallet" });
+    }
+  });
+
+  app.post("/api/wallet/setup", async (req, res) => {
+    try {
+      const userId = req.headers["x-user-id"] as string;
+      if (!userId) return res.status(401).json({ message: "Unauthorized" });
+      const { mode, privateKey, address } = req.body as {
+        mode?: "create" | "import" | "external";
+        privateKey?: string;
+        address?: string;
+      };
+      if (!mode) return res.status(400).json({ message: "Wallet setup mode is required" });
+
+      const existing = await db.query.wallets.findFirst({ where: eq(wallets.userId, userId) });
+      if (!existing) return res.status(404).json({ message: "Wallet not found" });
+
+      let nextAddress = existing.address;
+      let walletType = existing.walletType;
+      let encryptedPrivateKey: string | null = existing.encryptedPrivateKey;
+      let oneTimePrivateKey: string | undefined;
+
+      try {
+        if (mode === "create") {
+          const created = createManagedWallet();
+          nextAddress = created.address;
+          walletType = "managed";
+          encryptedPrivateKey = created.encryptedPrivateKey;
+          oneTimePrivateKey = created.privateKey;
+        } else if (mode === "import") {
+          if (!privateKey) return res.status(400).json({ message: "Private key is required to import a wallet" });
+          const imported = importManagedWallet(privateKey);
+          nextAddress = imported.address;
+          walletType = "managed";
+          encryptedPrivateKey = imported.encryptedPrivateKey;
+        } else if (mode === "external") {
+          if (!isWalletAddress(address)) return res.status(400).json({ message: "Enter a valid 0x wallet address" });
+          nextAddress = address;
+          walletType = "external";
+          encryptedPrivateKey = null;
+        } else {
+          return res.status(400).json({ message: "Unsupported wallet setup mode" });
+        }
+      } catch {
+        return res.status(400).json({ message: "Wallet setup is invalid" });
+      }
+
+      const [updated] = await db.update(wallets).set({
+        address: nextAddress,
+        walletType,
+        encryptedPrivateKey,
+      }).where(eq(wallets.id, existing.id)).returning();
+      let gydBalance = updated.gydBalance;
+      try {
+        gydBalance = await syncWalletOnChainBalance(updated.id, updated.address);
+      } catch (error) {
+        console.error("New wallet on-chain sync failed:", error);
+      }
+      res.json({
+        wallet: { id: updated.id, address: updated.address, walletType: updated.walletType, gydBalance, gydsBalance: updated.gydsBalance, internetFundsBalance: updated.internetFundsBalance },
+        ...(oneTimePrivateKey ? { walletPrivateKey: oneTimePrivateKey } : {}),
+      });
+    } catch (error) {
+      console.error("Wallet setup error:", error);
+      res.status(500).json({ message: "Wallet setup failed" });
     }
   });
 
@@ -768,6 +871,33 @@ export async function registerRoutes(app: Express): Promise<Server> {
     if (!u || !u.isAdmin) { res.status(403).json({ message: "Admin access required" }); return null; }
     return userId;
   }
+
+  app.get("/api/admin/rpc", async (req, res) => {
+    const adminId = await requireAdmin(req, res); if (!adminId) return;
+    try {
+      const status = await getNetlifeGyStatus();
+      res.json(status);
+    } catch (error) {
+      res.status(502).json({ rpcUrl: await getConfiguredRpcUrl(), message: error instanceof Error ? error.message : "RPC unavailable" });
+    }
+  });
+
+  app.patch("/api/admin/rpc", async (req, res) => {
+    const adminId = await requireAdmin(req, res); if (!adminId) return;
+    try {
+      const { rpcUrl } = req.body as { rpcUrl?: string };
+      if (!rpcUrl) return res.status(400).json({ message: "RPC URL is required" });
+      const parsed = new URL(rpcUrl);
+      if (!["http:", "https:"].includes(parsed.protocol)) return res.status(400).json({ message: "RPC URL must use HTTP or HTTPS" });
+      await setConfiguredRpcUrl(parsed.toString().replace(/\/$/, ""));
+      const status = await getNetlifeGyStatus();
+      const synced = await syncAllOnChainBalances();
+      await db.insert(auditLogs).values({ userId: adminId, action: "RPC_URL_UPDATED", details: { rpcUrl: parsed.toString(), synced }, ipAddress: req.ip, userAgent: req.get("user-agent") });
+      res.json({ ...status, synced });
+    } catch (error) {
+      res.status(400).json({ message: error instanceof Error ? error.message : "RPC URL is unavailable" });
+    }
+  });
 
   app.get("/api/admin/users", async (req, res) => {
     const adminId = await requireAdmin(req, res); if (!adminId) return;

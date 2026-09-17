@@ -18,6 +18,7 @@ interface Wallet {
   gydsBalance: string;
   internetFundsBalance: string;
   address: string;
+  walletType: "pending" | "managed" | "external" | string;
 }
 
 interface AuthContextType {
@@ -26,7 +27,13 @@ interface AuthContextType {
   isLoading: boolean;
   isAuthenticated: boolean;
   login: (email: string, password: string) => Promise<void>;
-  register: (username: string, email: string, password: string, pin: string) => Promise<void>;
+  register: (
+    username: string,
+    email: string,
+    password: string,
+    pin: string,
+    walletSetup?: { mode: "later" | "create" | "import" | "external"; privateKey?: string; address?: string },
+  ) => Promise<{ walletPrivateKey?: string }>;
   logout: () => Promise<void>;
   refreshWallet: () => Promise<void>;
   updateProfile: (input: { username: string; email: string; currentPassword: string }) => Promise<User>;
@@ -70,12 +77,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setWallet(data.wallet);
   }
 
-  async function register(username: string, email: string, password: string, pin: string) {
+  async function register(username: string, email: string, password: string, pin: string, walletSetup?: { mode: "later" | "create" | "import" | "external"; privateKey?: string; address?: string }) {
     const response = await apiRequest("POST", "/api/auth/register", { 
       username, 
       email, 
       password, 
-      pin 
+      pin,
+      walletSetup,
     });
     const data = await response.json();
     
@@ -83,6 +91,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     await saveUserData(data.user);
     setUser(data.user);
     setWallet(data.wallet);
+    return { walletPrivateKey: data.walletPrivateKey };
   }
 
   async function logout() {
